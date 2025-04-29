@@ -17,7 +17,6 @@ dotenv.config();
 
 const {
     PORT: PUERTO = 3001,
-    FRONTEND_URL: ORIGEN_PERMITIDO = "https://TU-FRONTEND.onrender.com",
     DB_HOST, DB_USER, DB_PASSWORD, DB_NAME,
     API_KEY, JWT_SECRET,
     NODE_ENV = 'development',
@@ -85,8 +84,25 @@ try {
 }
 if (!supabase) console.warn("⚠️ ADVERTENCIA: Cliente Supabase no inicializado.");
 
-console.log(`[CORS Config] Permitiendo origen: ${ORIGEN_PERMITIDO}`);
-app.use(cors({ origin: ORIGEN_PERMITIDO, credentials: true }));
+const cors = require("cors");
+
+// Definir los orígenes permitidos (local y producción)
+const origenesPermitidos = [
+  'http://localhost:5173',            // frontend local
+  'https://chat-frontend-y914.onrender.com' // tu frontend en producción (ajústalo si usas otro)
+];
+
+// Configurar CORS antes de cualquier middleware
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || origenesPermitidos.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('❌ No permitido por CORS: ' + origin));
+    }
+  },
+  credentials: true
+}));
 app.use(cookieParser());
 app.use(express.json());
 
