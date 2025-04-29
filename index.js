@@ -50,8 +50,6 @@ if (!SUPABASE_URL) console.warn("⚠️ [Startup] ADVERTENCIA: SUPABASE_URL no c
 if (!SUPABASE_KEY) console.warn("⚠️ [Startup] ADVERTENCIA: SUPABASE_KEY no configurada.");
 
 const app = express();
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 const directorioSubidas = path.join(__dirname, "uploads/");
 
 if (!existsSync(directorioSubidas)) {
@@ -339,6 +337,40 @@ app.post("/api/logout", (req, res) => {
 app.get("/api/verify-auth", autenticarToken, (req, res) => {
     res.json({ user: req.usuario });
 });
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Configurar el directorio de subidas
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+  console.log(`Directorio de subidas creado: ${uploadDir}`);
+} else {
+  console.log(`Directorio de subidas ya existe: ${uploadDir}`);
+}
+
+// Configurar multer
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueName = `${Date.now()}-${file.originalname}`;
+    cb(null, uniqueName);
+  }
+});
+const upload = multer({ storage });
+
+
+app.use(cors({
+  origin: [
+    'http://localhost:5173',
+    'https://chat-frontend-y914.onrender.com' // actualiza con tu dominio de frontend
+  ],
+  credentials: true
+}));
+app.use(cookieParser());
+app.use(express.json());
 app.post("/api/files", autenticarToken, upload.array("archivosPdf"), async (req, res) => {
     try {
       const usuarioId = req.usuario.id;
