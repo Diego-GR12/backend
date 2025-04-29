@@ -87,8 +87,7 @@ if (!supabase) console.warn("⚠️ ADVERTENCIA: Cliente Supabase no inicializad
 
 
 // Definir los orígenes permitidos (local y producción)
-const origenesPermitidos = [
-  'http://localhost:5173',            // frontend local
+const origenesPermitidos = [           // frontend local
   'https://chat-frontend-y914.onrender.com' // tu frontend en producción (ajústalo si usas otro)
 ];
 
