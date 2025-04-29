@@ -17,7 +17,7 @@ dotenv.config();
 
 const {
     PORT: PUERTO = 3001,
-    FRONTEND_URL: ORIGEN_PERMITIDO = "http://localhost:5173",
+    FRONTEND_URL: ORIGEN_PERMITIDO = "https://TU-FRONTEND.onrender.com",
     DB_HOST, DB_USER, DB_PASSWORD, DB_NAME,
     API_KEY, JWT_SECRET,
     NODE_ENV = 'development',
