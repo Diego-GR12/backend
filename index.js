@@ -340,6 +340,25 @@ app.post("/api/logout", (req, res) => {
 app.get("/api/verify-auth", autenticarToken, (req, res) => {
     res.json({ user: req.usuario });
 });
+app.post("/api/files", autenticarToken, upload.array("archivosPdf"), async (req, res) => {
+    try {
+      const usuarioId = req.usuario.id;
+      const archivos = req.files;
+  
+      const queries = archivos.map(file => {
+        return pool.execute(
+          "INSERT INTO archivos_usuario (usuario_id, nombre_archivo_unico, nombre_archivo_original) VALUES (?, ?, ?)",
+          [usuarioId, file.filename, file.originalname]
+        );
+      });
+  
+      await Promise.all(queries);
+      res.status(200).json({ mensaje: "Archivos subidos correctamente." });
+    } catch (error) {
+      console.error("[Upload Files] Error:", error);
+      res.status(500).json({ error: "Error al subir archivos" });
+    }
+  });
 
 app.get("/api/files", autenticarToken, async (req, res, next) => {
     try {
