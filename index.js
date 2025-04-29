@@ -84,7 +84,7 @@ try {
 }
 if (!supabase) console.warn("⚠️ ADVERTENCIA: Cliente Supabase no inicializado.");
 
-const cors = require("cors");
+
 
 // Definir los orígenes permitidos (local y producción)
 const origenesPermitidos = [
