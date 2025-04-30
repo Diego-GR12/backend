@@ -27,14 +27,6 @@ const {
     SUPABASE_KEY
 } = process.env;
 
-const directorioSubidas = path.join(__dirname, "uploads/");
-
-if (!existsSync(directorioSubidas)) {
-    mkdirSync(directorioSubidas, { recursive: true });
-    console.log(`Directorio de subidas creado: ${directorioSubidas}`);
-} else {
-    console.log(`Directorio de subidas ya existe: ${directorioSubidas}`);
-}
 
 
 const TAMANO_MAX_ARCHIVO_MB = 20;
@@ -346,8 +338,8 @@ app.get("/api/verify-auth", autenticarToken, (req, res) => {
 
 // Configurar el directorio de subidas
 const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+if (!existsSync(uploadDir)) {
+    mkdirSync(uploadDir, { recursive: true });
   console.log(`Directorio de subidas creado: ${uploadDir}`);
 } else {
   console.log(`Directorio de subidas ya existe: ${uploadDir}`);
