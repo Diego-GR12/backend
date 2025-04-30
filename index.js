@@ -84,20 +84,21 @@ if (!supabase) console.warn("⚠️ ADVERTENCIA: Cliente Supabase no inicializad
 
 // Definir los orígenes permitidos (local y producción)
 const origenesPermitidos = [           // frontend local
-  'https://chat-frontend-y914.onrender.com' // tu frontend en producción (ajústalo si usas otro)
+  'https://chat-frontend-y914.onrender.com',
+  'http://localhost:5173'   
 ];
 
 // Configurar CORS antes de cualquier middleware
 app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || origenesPermitidos.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('❌ No permitido por CORS: ' + origin));
-    }
-  },
-  credentials: true
-}));
+    origin: (origin, callback) => {
+      if (!origin || origenesPermitidos.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('❌ No permitido por CORS: ' + origin));
+      }
+    },
+    credentials: true
+  }));
 app.use(cookieParser());
 app.use(express.json());
 
