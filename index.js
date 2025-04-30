@@ -85,10 +85,11 @@ if (!supabase) console.warn("⚠️ ADVERTENCIA: Cliente Supabase no inicializad
 
 
 // Definir los orígenes permitidos (local y producción)
-const origenesPermitidos = [           // frontend local
-   'http://localhost:5173',
-  'https://chat-frontend-y914.onrender.com'  
-];
+const origenesPermitidos = [
+    "https://chat-frontend-y914.onrender.com", // Producción
+    "http://localhost:5173",                   // Desarrollo local
+    "capacitor://localhost"                    // Apps móviles con Capacitor
+  ];
 
 // Configurar CORS antes de cualquier middleware
 app.use(cors({
@@ -96,8 +97,8 @@ app.use(cors({
       if (!origin || origenesPermitidos.includes(origin)) {
         callback(null, true);
       } else {
-        console.warn(`‼️ Global Error: ❌ No permitido por CORS: ${origin}`);
-        callback(new Error('No permitido por CORS: ' + origin));
+        console.warn(`‼️ Global Error: No permitido por CORS: ${origin}`);
+        callback(new Error('❌ No permitido por CORS: ' + origin));
       }
     },
     credentials: true
@@ -363,15 +364,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 
-app.use(cors({
-  origin: [
-    'http://localhost:5173',
-    'https://chat-frontend-y914.onrender.com' // actualiza con tu dominio de frontend
-  ],
-  credentials: true
-}));
-app.use(cookieParser());
-app.use(express.json());
+
 
 
 app.post("/api/files", autenticarToken, upload.array("archivosPdf"), async (req, res) => {
