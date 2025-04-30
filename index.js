@@ -372,22 +372,33 @@ app.use(cors({
 }));
 app.use(cookieParser());
 app.use(express.json());
+
+
 app.post("/api/files", autenticarToken, upload.array("archivosPdf"), async (req, res) => {
     try {
       const usuarioId = req.usuario.id;
       const archivos = req.files;
   
-      const queries = archivos.map(file => {
-        return pool.execute(
-          "INSERT INTO archivos_usuario (usuario_id, nombre_archivo_unico, nombre_archivo_original) VALUES (?, ?, ?)",
-          [usuarioId, file.filename, file.originalname]
-        );
-      });
+      const registros = archivos.map(file => ({
+        usuario_id: usuarioId,
+        nombre_archivo_unico: file.filename,
+        nombre_archivo_original: file.originalname
+      }));
   
-      await Promise.all(queries);
+      const { error } = await supabase
+        .from("archivos_usuario")
+        .insert(registros);
+  
+      if (error) {
+        console.error("[Upload Files] ❌ Error Supabase:", error.message);
+        return res.status(500).json({ error: "Error al guardar archivos en la base de datos." });
+      }
+  
+      console.log(`[Upload Files] ✅ ${archivos.length} archivo(s) guardado(s).`);
       res.status(200).json({ mensaje: "Archivos subidos correctamente." });
+  
     } catch (error) {
-      console.error("[Upload Files] Error:", error);
+      console.error("[Upload Files] ❌ Excepción:", error);
       res.status(500).json({ error: "Error al subir archivos" });
     }
   });
