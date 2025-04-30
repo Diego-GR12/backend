@@ -28,7 +28,15 @@ const {
     SUPABASE_KEY
 } = process.env;
 
+const isDev = NODE_ENV !== 'production';
 
+const COOKIE_OPTIONS = {
+    httpOnly: true,
+    secure: !isDev, // solo usa secure en producción (HTTPS)
+    sameSite: isDev ? 'lax' : 'none',
+    maxAge: 3600 * 1000,
+    path: '/',
+};
 
 const TAMANO_MAX_ARCHIVO_MB = 20;
 const MAX_CARACTERES_POR_PDF = 10000;
@@ -39,13 +47,7 @@ const TEMP_POR_DEFECTO = 0.7;
 const TOPP_POR_DEFECTO = 0.9;
 const IDIOMA_POR_DEFECTO = 'es';
 const JWT_OPTIONS = { expiresIn: '1h' };
-const COOKIE_OPTIONS = {
-    httpOnly: true,
-    secure: !isDev, // solo usa secure en producción (HTTPS)
-    sameSite: isDev ? 'lax' : 'none',
-    maxAge: 3600 * 1000,
-    path: '/',
-};
+
 
 console.log('[Startup] JWT_SECRET cargado:', JWT_SECRET ? `${JWT_SECRET.substring(0, 3)}... (longitud: ${JWT_SECRET.length})` : '¡NO CARGADO!');
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
