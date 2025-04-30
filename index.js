@@ -41,8 +41,8 @@ const IDIOMA_POR_DEFECTO = 'es';
 const JWT_OPTIONS = { expiresIn: '1h' };
 const COOKIE_OPTIONS = {
     httpOnly: true,
-    secure: NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: !isDev, // solo usa secure en producción (HTTPS)
+    sameSite: isDev ? 'lax' : 'none',
     maxAge: 3600 * 1000,
     path: '/',
 };
