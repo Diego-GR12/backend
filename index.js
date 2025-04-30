@@ -13,6 +13,9 @@ import jwt from 'jsonwebtoken';
 import cookieParser from 'cookie-parser';
 import { createClient } from "@supabase/supabase-js";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 dotenv.config();
 
 const {
@@ -23,6 +26,16 @@ const {
     SUPABASE_URL, 
     SUPABASE_KEY
 } = process.env;
+
+const directorioSubidas = path.join(__dirname, "uploads/");
+
+if (!existsSync(directorioSubidas)) {
+    mkdirSync(directorioSubidas, { recursive: true });
+    console.log(`Directorio de subidas creado: ${directorioSubidas}`);
+} else {
+    console.log(`Directorio de subidas ya existe: ${directorioSubidas}`);
+}
+
 
 const TAMANO_MAX_ARCHIVO_MB = 20;
 const MAX_CARACTERES_POR_PDF = 10000;
@@ -50,14 +63,6 @@ if (!SUPABASE_URL) console.warn("⚠️ [Startup] ADVERTENCIA: SUPABASE_URL no c
 if (!SUPABASE_KEY) console.warn("⚠️ [Startup] ADVERTENCIA: SUPABASE_KEY no configurada.");
 
 const app = express();
-const directorioSubidas = path.join(__dirname, "uploads/");
-
-if (!existsSync(directorioSubidas)) {
-    mkdirSync(directorioSubidas, { recursive: true });
-    console.log(`Directorio de subidas creado: ${directorioSubidas}`);
-} else {
-    console.log(`Directorio de subidas ya existe: ${directorioSubidas}`);
-}
 
 
 
@@ -337,8 +342,7 @@ app.post("/api/logout", (req, res) => {
 app.get("/api/verify-auth", autenticarToken, (req, res) => {
     res.json({ user: req.usuario });
 });
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+
 
 // Configurar el directorio de subidas
 const uploadDir = path.join(__dirname, 'uploads');
