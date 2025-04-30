@@ -594,7 +594,10 @@ app.post("/api/generateText", autenticarToken, subir, async (req, res) => {
         if (!conversationId) {
             const { data, error } = await supabase
                 .from("conversaciones")
-                .insert([{ usuario_id: usuarioId, titulo: "Nueva conversación" }])
+                .insert([{
+                    usuario_id: usuarioId,
+                    titulo: prompt.trim().split(/\s+/).slice(0, 5).join(" ") || "Conversación nueva"
+                  }])
                 .select("id")
                 .single();
 
