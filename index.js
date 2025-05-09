@@ -1,4 +1,4 @@
-// --- START OF FILE index.js (CON CORRECCIÓN CORS Y LOGS DEBUG HF) ---
+// --- START OF FILE index.js (CORS MEJORADO, LOGS DEBUG HF) ---
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import express from "express";
@@ -20,17 +20,17 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const directorioSubidas = path.join(__dirname, "uploads");
 
-dotenv.config(); // Carga variables de .env para desarrollo local
+dotenv.config(); 
 
 const {
   PORT: PUERTO = 3001,
   API_KEY, 
   JWT_SECRET,
-  NODE_ENV = "development", // Default a development si no está seteado
+  NODE_ENV = "development", 
   SUPABASE_URL,
   SUPABASE_KEY,
   HUGGING_FACE_API_KEY,
-  FRONTEND_URL, // <--- Nueva variable para la URL del frontend
+  FRONTEND_URL, // MUY IMPORTANTE: Configurar en Render SIN la barra final (ej: https://chat-bot-jwpc.onrender.com)
 } = process.env;
 
 const isDev = NODE_ENV !== "production";
@@ -38,7 +38,7 @@ const isDev = NODE_ENV !== "production";
 const COOKIE_OPTIONS = {
   httpOnly: true,
   secure: !isDev,
-  sameSite: !isDev ? "none" : "lax", // En producción (no dev), SameSite=None requiere Secure=true
+  sameSite: !isDev ? "none" : "lax",
   maxAge: 3600 * 1000 * 24, 
   path: "/",
 };
@@ -47,11 +47,7 @@ const TAMANO_MAX_ARCHIVO_MB = 20;
 const MAX_LONGITUD_CONTEXTO = 30000; 
 const MODELOS_GEMINI_PERMITIDOS = ["gemini-1.5-flash", "gemini-1.5-pro"];
 const MODELO_GEMINI_POR_DEFECTO = "gemini-1.5-flash";
-// Elige el modelo de imagen que quieres usar por defecto:
-const MODELO_IMAGEN_HF_POR_DEFECTO = "CompVis/stable-diffusion-v1-4"; // Bueno para pruebas rápidas
-// const MODELO_IMAGEN_HF_POR_DEFECTO = "runwayml/stable-diffusion-v1-5"; // Popular y bueno
-// const MODELO_IMAGEN_HF_POR_DEFECTO = "prompthero/openjourney-v4"; // Estilo artístico
-// const MODELO_IMAGEN_HF_POR_DEFECTO = "stabilityai/stable-diffusion-xl-base-1.0"; // Alta calidad, más lento
+const MODELO_IMAGEN_HF_POR_DEFECTO = "CompVis/stable-diffusion-v1-4"; // Para diagnóstico inicial
 const TEMP_POR_DEFECTO = 0.7;
 const TOPP_POR_DEFECTO = 0.9;
 const IDIOMA_POR_DEFECTO = "es";
@@ -68,64 +64,82 @@ for (const [key, value] of Object.entries(requiredEnvVars)) {
   }
 }
 if (JWT_SECRET && JWT_SECRET.length < 32) console.warn("⚠️ [Startup] ADVERTENCIA: JWT_SECRET es corto, considera usar uno más largo y seguro.");
-if (NODE_ENV === "production" && !FRONTEND_URL) console.warn("⚠️ [Startup] ADVERTENCIA: FRONTEND_URL no configurada para producción, CORS podría fallar.");
+if (NODE_ENV === "production" && !FRONTEND_URL) console.warn("⚠️ [Startup] ADVERTENCIA CRÍTICA: FRONTEND_URL no configurada para producción. ¡CORS FALLARÁ!");
 
 
 const app = express();
 
 let clienteIA; 
 if (API_KEY) {
-  try {
-    clienteIA = new GoogleGenerativeAI(API_KEY);
-    console.log("✅ Instancia de GoogleGenerativeAI creada.");
-  } catch (error) {
-    console.error("🚨 Error al inicializar GoogleGenerativeAI:", error.message);
-  }
-} else {
-  console.warn("⚠️ API_KEY de Google no provista. Funcionalidad de texto IA (Google) deshabilitada.");
-}
+  try { clienteIA = new GoogleGenerativeAI(API_KEY); console.log("✅ Instancia de GoogleGenerativeAI creada."); }
+  catch (error) { console.error("🚨 Error al inicializar GoogleGenerativeAI:", error.message); }
+} else { console.warn("⚠️ API_KEY de Google no provista. Funcionalidad de texto IA (Google) deshabilitada."); }
 
 let supabase; 
 if (SUPABASE_URL && SUPABASE_KEY) {
-  try {
-    supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-    console.log("✅ Cliente Supabase inicializado.");
-  } catch (error) {
-    console.error("🚨 Error al inicializar Supabase:", error.message);
-  }
-} else {
-   console.warn("⚠️ SUPABASE_URL o SUPABASE_KEY no provistas. Funcionalidad de BD (Supabase) deshabilitada.");
-}
+  try { supabase = createClient(SUPABASE_URL, SUPABASE_KEY); console.log("✅ Cliente Supabase inicializado."); }
+  catch (error) { console.error("🚨 Error al inicializar Supabase:", error.message); }
+} else { console.warn("⚠️ SUPABASE_URL o SUPABASE_KEY no provistas. Funcionalidad de BD (Supabase) deshabilitada."); }
 
+// --- CONFIGURACIÓN CORS MEJORADA ---
 app.use(
   cors({
     origin: (origin, callback) => {
-      const allowedOrigins = [
-        FRONTEND_URL, // URL de producción desde variable de entorno
-        'http://localhost:5173', 
-        'http://localhost:3000',
-        'https://chat-bot-jwpc.onrender.com/'
-      ].filter(Boolean); // Filtra undefined si FRONTEND_URL no está seteada
+      // Función para normalizar URLs: quitar barra final y convertir a minúsculas para la comparación.
+      const normalizeUrl = (url) => {
+        if (url) {
+          let normalized = url.toLowerCase();
+          if (normalized.endsWith('/')) {
+            normalized = normalized.slice(0, -1);
+          }
+          return normalized;
+        }
+        return undefined; // Si url es undefined, devuelve undefined
+      };
 
-      if (isDev || !origin || (allowedOrigins.length > 0 && allowedOrigins.includes(origin)) ) {
-        // En desarrollo, o si no hay origin (Postman/curl), o si el origin está en la lista permitida
-        if (origin) console.log("🌍 Solicitud CORS desde (permitido):", origin);
+      const normalizedOrigin = normalizeUrl(origin);
+      
+      const allowedOrigins = [
+        FRONTEND_URL, 
+        'http://localhost:5173', 
+        'http://localhost:3000'
+      ]
+      .filter(Boolean) // Quitar undefineds/nulls/vacíos
+      .map(normalizeUrl); // Normalizar todas las URLs permitidas
+
+      // Log para depuración de CORS
+      // console.log(`[CORS DEBUG] Request Origin: ${origin}, Normalized Origin: ${normalizedOrigin}`);
+      // console.log(`[CORS DEBUG] Allowed Origins (raw): ${[FRONTEND_URL, 'http://localhost:5173', 'http://localhost:3000']}`);
+      // console.log(`[CORS DEBUG] Allowed Origins (normalized): ${allowedOrigins}`);
+
+      if (isDev && !origin) { // Permitir Postman/curl en desarrollo sin origin
+        console.log("🌍 Solicitud CORS (sin origen, modo dev - permitido)");
+        return callback(null, true);
+      }
+      
+      if (allowedOrigins.includes(normalizedOrigin)) {
+        console.log("🌍 Solicitud CORS desde (permitido):", origin);
         callback(null, true);
       } else {
-        console.warn("🚫 Solicitud CORS bloqueada desde:", origin, "- No está en allowedOrigins:", allowedOrigins);
-        callback(new Error('Origen no permitido por CORS'));
+        console.warn("🚫 Solicitud CORS bloqueada desde:", origin, `(Normalizado: ${normalizedOrigin})`);
+        console.warn("   Orígenes permitidos (normalizados):", allowedOrigins);
+        console.warn(`   Verifica que FRONTEND_URL ('${FRONTEND_URL}') en el backend coincida EXACTAMENTE (sin / final) con el origen del frontend y que esté configurada en Render.`);
+        callback(new Error('Origen no permitido por la política CORS del servidor.'));
       }
     },
     credentials: true,
   })
 );
+// --- FIN CONFIGURACIÓN CORS MEJORADA ---
+
 app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 const autenticarToken = (req, res, next) => {
+  // ... (código de autenticarToken sin cambios, ya está bien)
   const token = req.cookies.token;
-  const requestPath = req.path; // Para logging
+  const requestPath = req.path; 
   if (!token) {
       console.log(`[Auth] Fail: No token cookie para path: ${requestPath}`);
       return res.status(401).json({ error: "Acceso no autorizado: Token no proporcionado." });
@@ -144,19 +158,15 @@ const autenticarToken = (req, res, next) => {
       }
       return res.status(403).json({ error: "Token inválido o corrupto." }); 
     }
-    console.log(`[Auth] OK: Token verificado para ${usuarioToken.username} (ID: ${usuarioToken.id}) para path: ${requestPath}`);
+    // console.log(`[Auth] OK: Token verificado para ${usuarioToken.username} (ID: ${usuarioToken.id}) para path: ${requestPath}`); // Loguear esto puede ser muy verboso
     req.usuario = usuarioToken;
     next();
   });
 };
 
 if (!existsSync(directorioSubidas)) {
-  try {
-    mkdirSync(directorioSubidas, { recursive: true });
-    console.log(`📂 Directorio de subidas creado: ${directorioSubidas}`);
-  } catch (error) {
-    console.error(`🚨 Error creando directorio de subidas ${directorioSubidas}:`, error);
-  }
+  try { mkdirSync(directorioSubidas, { recursive: true }); console.log(`📂 Directorio de subidas creado: ${directorioSubidas}`); }
+  catch (error) { console.error(`🚨 Error creando directorio de subidas ${directorioSubidas}:`, error); }
 }
 
 const almacenamiento = multer.diskStorage({
@@ -176,7 +186,6 @@ const subirPDFs = multer({
     if (file.mimetype === "application/pdf") {
       cb(null, true);
     } else {
-      // Rechazar archivo y pasar un error que Multer pueda manejar
       cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE", "Solo se permiten archivos PDF."), false);
     }
   },
@@ -184,6 +193,7 @@ const subirPDFs = multer({
 
 
 async function extraerTextoDePDF(rutaArchivo) {
+  // ... (código como antes)
   const nombreArchivoLog = path.basename(rutaArchivo);
   try {
     await fs.access(rutaArchivo); 
@@ -197,6 +207,7 @@ async function extraerTextoDePDF(rutaArchivo) {
 }
 
 async function generarContextoPDF(idUsuario, nombresArchivosUnicos) {
+  // ... (código como antes)
   if (!supabase) return "[Error: Servicio de BD no disponible para contexto PDF]";
   if (!nombresArchivosUnicos || nombresArchivosUnicos.length === 0) return "";
   try {
@@ -212,7 +223,7 @@ async function generarContextoPDF(idUsuario, nombresArchivosUnicos) {
     }
     if (!archivosDB || archivosDB.length === 0) {
         console.warn(`[Context PDF] No se encontraron archivos en DB para IDs: ${nombresArchivosUnicos.join(', ')} (Usuario ${idUsuario})`);
-        return "[No se encontraron archivos PDF para el contexto]";
+        return "[No se encontraron archivos PDF para el contexto especificado]";
     }
 
     const archivosMap = new Map(archivosDB.map((f) => [f.nombre_archivo_unico, f.nombre_archivo_original]));
@@ -235,6 +246,7 @@ async function generarContextoPDF(idUsuario, nombresArchivosUnicos) {
 }
 
 async function generarRespuestaIA(prompt, historialDB, textoPDF, modeloReq, temp, topP, lang) {
+  // ... (código como antes)
   if (!clienteIA) throw new Error("Servicio IA (Google Gemini) no disponible.");
   
   const nombreModelo = MODELOS_GEMINI_PERMITIDOS.includes(modeloReq) ? modeloReq : MODELO_GEMINI_POR_DEFECTO;
@@ -286,7 +298,9 @@ async function generarRespuestaIA(prompt, historialDB, textoPDF, modeloReq, temp
   }
 }
 
-// RUTAS API
+// ---- TODAS TUS RUTAS API (AUTH, FILES, CONVERSATIONS, generateText) VAN AQUÍ ----
+// ---- (Las omito para brevedad, pero asegúrate de que están como antes) ----
+
 app.post("/api/register", async (req, res, next) => {
   if (!supabase) return res.status(503).json({ error: "Servicio no disponible (BD)." });
   const { username, password } = req.body;
@@ -327,7 +341,7 @@ app.post("/api/logout", (_req, res) => {
 });
 
 app.get("/api/verify-auth", autenticarToken, (req, res) => {
-  console.log(`[Verify Auth] OK: User ${req.usuario.username} (ID: ${req.usuario.id}) verificado.`);
+  // El log ya está en autenticarToken
   res.json({ user: req.usuario });
 });
 
@@ -495,6 +509,7 @@ app.post("/api/generateText", autenticarToken, subirPDFs, async (req, res, next)
   } catch (error) { next(error); }
 });
 
+
 // --- RUTA PARA GENERACIÓN DE IMÁGENES CON LOGS DE DEBUG ---
 app.post("/api/generate-image", autenticarToken, async (req, res, next) => {
     const { prompt, modelId, idioma: langRequest } = req.body;
@@ -511,18 +526,17 @@ app.post("/api/generate-image", autenticarToken, async (req, res, next) => {
         console.log("[Img Gen DEBUG] Prompt vacío o solo espacios.");
         return res.status(400).json({ error: lang === 'es' ? "El prompt para la imagen no puede estar vacío." : "Image prompt cannot be empty." });
     }
-    if (!HUGGING_FACE_API_KEY) {
-        console.error("[Img Gen DEBUG] CRITICAL: HUGGING_FACE_API_KEY no está configurada en el servidor (verificado en ruta).");
-        // No usar 'next(error)' aquí porque queremos una respuesta JSON controlada y específica para este fallo
+    if (!HUGGING_FACE_API_KEY) { // Esta verificación es importante
+        console.error("[Img Gen DEBUG] CRITICAL: HUGGING_FACE_API_KEY no configurada en el servidor (verificado en ruta).");
         return res.status(500).json({ error: lang === 'es' ? "Servicio de generación de imágenes no disponible (error de configuración interna)." : "Image generation service unavailable (internal config error)." });
     }
 
-    const HUGGING_FACE_MODEL_ID_ACTUAL = modelId || MODELO_IMAGEN_HF_POR_DEFECTO;
+    const HUGGING_FACE_MODEL_ID_ACTUAL = modelId || MODELO_IMAGEN_HF_POR_DEFECTO; // Usa la constante definida arriba
     const API_URL_ACTUAL = `https://api-inference.huggingface.co/models/${HUGGING_FACE_MODEL_ID_ACTUAL}`;
     
     console.log(`[Img Gen DEBUG] HUGGING_FACE_MODEL_ID_ACTUAL a usar: ${HUGGING_FACE_MODEL_ID_ACTUAL}`);
     console.log(`[Img Gen DEBUG] API_URL_ACTUAL a usar: ${API_URL_ACTUAL}`);
-    console.log(`[Img Gen DEBUG] HUGGING_FACE_API_KEY (existe?): Sí (verificación previa pasada)`);
+    // Ya no necesitamos verificar si HUGGING_FACE_API_KEY existe aquí porque lo hicimos arriba
     console.log(`[Img Gen DEBUG] HF Key (primeros 5): ${HUGGING_FACE_API_KEY.substring(0, 5)}`);
     console.log(`[Img Gen DEBUG] HF Key (últimos 5): ${HUGGING_FACE_API_KEY.substring(HUGGING_FACE_API_KEY.length - 5)}`);
     console.log(`[Img Gen DEBUG] Cuerpo de la solicitud a HF (inputs): ${JSON.stringify({ inputs: prompt })}`);
@@ -530,10 +544,10 @@ app.post("/api/generate-image", autenticarToken, async (req, res, next) => {
     const headersParaHF = {
         "Authorization": `Bearer ${HUGGING_FACE_API_KEY}`,
         "Content-Type": "application/json",
-        "Accept": "image/jpeg" // Solicitar JPEG, podría ser image/png también
+        "Accept": "image/jpeg" 
     };
-    const safeHeadersForLogging = {...headersParaHF}; // Crear copia para loguear de forma segura
-    if (HUGGING_FACE_API_KEY) { // Ofuscar token para logs
+    const safeHeadersForLogging = {...headersParaHF}; 
+    if (HUGGING_FACE_API_KEY) { 
         safeHeadersForLogging.Authorization = `Bearer hf_...${HUGGING_FACE_API_KEY.substring(HUGGING_FACE_API_KEY.length - 4)}`;
     }
     console.log(`[Img Gen DEBUG] Cabeceras para HF (token ofuscado): ${JSON.stringify(safeHeadersForLogging)}`);
@@ -547,27 +561,26 @@ app.post("/api/generate-image", autenticarToken, async (req, res, next) => {
             {
                 headers: headersParaHF,
                 responseType: 'arraybuffer',
-                timeout: 60000 // Timeout de 60 segundos para la petición
+                timeout: 60000 
             }
         );
-        console.log(`[Img Gen DEBUG] Respuesta de HF Status: ${hfResponse.status}`);
+        console.log(`[Img Gen DEBUG] Respuesta de HF Status: ${hfResponse.status}, Content-Type: ${hfResponse.headers['content-type']}`);
 
         if (hfResponse.status === 200 && hfResponse.data && hfResponse.data.byteLength > 0) {
-            const contentType = hfResponse.headers['content-type'] || 'image/jpeg'; // Fallback
+            const contentType = hfResponse.headers['content-type'] || 'image/jpeg'; 
             const imageBase64 = Buffer.from(hfResponse.data, 'binary').toString('base64');
             const imageSrc = `data:${contentType};base64,${imageBase64}`;
-            console.log(`[Img Gen] ✅ Imagen generada para user ${req.usuario.id}. Content-Type: ${contentType}. Tamaño: ${hfResponse.data.byteLength} bytes.`);
+            console.log(`[Img Gen] ✅ Imagen generada para user ${req.usuario.id}. Tamaño: ${hfResponse.data.byteLength} bytes.`);
             res.json({ imageUrl: imageSrc, originalPrompt: prompt });
         } else {
-            // Este bloque se ejecutaría si HF devuelve 200 pero el cuerpo está vacío o es incorrecto.
             let errorMessage = lang === 'es' ? `Respuesta inesperada del servicio de imágenes (status ${hfResponse.status}).` : `Unexpected response from image service (status ${hfResponse.status}).`;
             let errorBodyPreview = "Sin datos en la respuesta o datos vacíos.";
             if (hfResponse.data) {
                  errorBodyPreview = Buffer.from(hfResponse.data,'binary').toString().substring(0,100);
                  try {
-                    const errorData = JSON.parse(errorBodyPreview); // Si es que HF envía JSON en errores con status 200
+                    const errorData = JSON.parse(errorBodyPreview); 
                     if (errorData.error) errorMessage = errorData.error;
-                 } catch(e){}
+                 } catch(e){ /* Ignorar si no es JSON */ }
             }
             console.error(`[Img Gen] ❌ Respuesta inesperada de HF (status ${hfResponse.status}) para user ${req.usuario.id}: ${errorMessage}. Cuerpo: ${errorBodyPreview}`);
             const serviceError = new Error(errorMessage);
@@ -576,7 +589,6 @@ app.post("/api/generate-image", autenticarToken, async (req, res, next) => {
         }
     } catch (error) {
       console.log("[Img Gen DEBUG] ERROR EN BLOQUE CATCH DE AXIOS para HF");
-      // ... el resto de tu lógica catch para axios (que ya estaba bien) ...
       let statusCode = 500;
       let message = lang === 'es' ? "Error generando imagen." : "Error generating image.";
 
@@ -586,26 +598,28 @@ app.post("/api/generate-image", autenticarToken, async (req, res, next) => {
           console.error(`[Img Gen] ❌ Timeout llamando a HF API para user ${req.usuario.id}: ${error.message}`);
       } else if (error.response) { 
           statusCode = error.response.status;
-          const responseData = error.response.data; // Esto es un ArrayBuffer si responseType fue 'arraybuffer'
-          let errorTextFromHF = `Error del servidor de imágenes (${statusCode}).`; // Mensaje por defecto
+          const responseData = error.response.data; 
+          let errorTextFromHF = `Error del servidor de imágenes (${statusCode}).`;
           if(responseData){
               try {
-                  errorTextFromHF = Buffer.from(responseData).toString(); // Convertir ArrayBuffer a string
-                  const errorData = JSON.parse(errorTextFromHF); // Intentar parsear como JSON
+                  errorTextFromHF = Buffer.from(responseData).toString(); 
+                  const errorData = JSON.parse(errorTextFromHF); 
                   message = errorData.error || (lang === 'es' ? `Error API Hugging Face (${statusCode})` : `Hugging Face API Error (${statusCode})`);
                   if (errorData.estimated_time) {
                       message = lang === 'es' ? `El modelo de imagen (${HUGGING_FACE_MODEL_ID_ACTUAL}) está cargando (aprox. ${errorData.estimated_time.toFixed(0)}s). Intenta de nuevo.` : `Image model (${HUGGING_FACE_MODEL_ID_ACTUAL}) is loading (approx. ${errorData.estimated_time.toFixed(0)}s). Please try again.`;
-                      statusCode = 503; // Este es el status correcto para "modelo cargando"
+                      statusCode = 503;
                   }
-              } catch (parseError) { // Si Buffer.from().toString() no es JSON parseable
-                   message = lang === 'es' ? `Error (${statusCode}) del servicio de imágenes. Respuesta no JSON.` : `Image service error (${statusCode}). Non-JSON response.`;
-                   console.error("[Img Gen] Cuerpo del error (no JSON o buffer inválido):", errorTextFromHF.substring(0,200)); // Loguear el texto crudo
+              } catch (parseError) { 
+                   message = lang === 'es' ? `Error (${statusCode}) del servicio de imágenes. Respuesta no reconocible.` : `Image service error (${statusCode}). Unrecognized response.`;
+                   console.error("[Img Gen] Cuerpo del error (no JSON o buffer inválido):", errorTextFromHF ? errorTextFromHF.substring(0,200) : "Sin cuerpo de respuesta");
               }
+          } else {
+              message = error.message; // Usar el mensaje del error de axios si no hay response.data
           }
-          console.error(`[Img Gen] ❌ Catch con error.response - User ${req.usuario.id} - Status: ${statusCode} - Mensaje: ${message}`);
+          console.error(`[Img Gen] ❌ Catch con error.response - User ${req.usuario.id} - Status: ${statusCode} - Mensaje devuelto: ${message}`);
       } else if (error.request) { 
-          message = lang === 'es' ? "No se pudo conectar con el servicio de generación de imágenes." : "Could not connect to the image generation service.";
-          console.error(`[Img Gen] ❌ Sin respuesta de HF API para user ${req.usuario.id}: ${error.message}`);
+          message = lang === 'es' ? "No se pudo conectar con el servicio de generación de imágenes (sin respuesta)." : "Could not connect to the image generation service (no response).";
+          console.error(`[Img Gen] ❌ Sin respuesta de HF API para user ${req.usuario.id}:`, error.message);
       } else { 
           message = lang === 'es' ? "Ocurrió un error inesperado al generar la imagen." : "An unexpected error occurred while generating the image.";
           console.error(`[Img Gen] ❌ Error desconocido para user ${req.usuario.id}:`, error.message, error.stack);
@@ -613,7 +627,7 @@ app.post("/api/generate-image", autenticarToken, async (req, res, next) => {
       
       const errToPass = new Error(message); 
       errToPass.status = statusCode;
-      next(errToPass); // Pasar al manejador de errores global
+      next(errToPass); 
     }
 });
 
@@ -643,20 +657,21 @@ app.use((err, req, res, next) => {
     statusCode = 400;
     clientMessage = errorLang === "en" ? "Malformed request (Invalid JSON)." : "Petición mal formada (JSON inválido).";
   } else if (err.message.toLowerCase().includes("servicio") && (err.message.toLowerCase().includes("ia") || err.message.toLowerCase().includes("bd") || err.message.toLowerCase().includes("no disponible"))) {
-    statusCode = 503; // Service Unavailable
+    statusCode = 503;
     clientMessage = errorLang === "en" ? "Service temporarily unavailable. Please try again later." : "Servicio no disponible temporalmente. Por favor, inténtalo más tarde.";
-  } else if (statusCode >= 500 || !err.status) { // Para errores no manejados específicamente o errores de servidor
+  } else if (err.message.toLowerCase().includes("origen no permitido por") && err.message.toLowerCase().includes("cors")) { // Específico para el error CORS
+    statusCode = 403; // Forbidden es más apropiado para CORS que 500
+    clientMessage = errorLang === "en" ? "Access to the API from your origin has been blocked by CORS policy." : "El acceso a la API desde tu origen ha sido bloqueado por la política CORS.";
+  } else if (statusCode >= 500 || !err.status) {
     clientMessage = errorLang === "en" ? "An internal server error occurred. Please try again later." : "Ocurrió un error interno en el servidor. Por favor, inténtalo más tarde.";
   }
-  // Si es un error < 500 con mensaje ya orientado al cliente, clientMessage (del propio err.message) se usará.
-
+  
   if (res.headersSent) {
     console.error("‼️ Error Handler: Headers already sent.");
     return next(err); 
   }
   res.status(statusCode).json({ error: clientMessage });
 });
-
 
 const PUERTO_ACTUAL = PUERTO || 3001;
 app.listen(PUERTO_ACTUAL, () => {
