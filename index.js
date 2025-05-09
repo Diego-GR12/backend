@@ -103,7 +103,8 @@ app.use(
       const allowedOrigins = [
         FRONTEND_URL, // URL de producción desde variable de entorno
         'http://localhost:5173', 
-        'http://localhost:3000'
+        'http://localhost:3000',
+        'https://chat-bot-jwpc.onrender.com/'
       ].filter(Boolean); // Filtra undefined si FRONTEND_URL no está seteada
 
       if (isDev || !origin || (allowedOrigins.length > 0 && allowedOrigins.includes(origin)) ) {
