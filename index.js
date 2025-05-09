@@ -556,7 +556,7 @@ app.post("/api/generate-image", autenticarToken, async (req, res, next) => {
     // Elige un modelo de Hugging Face. Ej: "stabilityai/stable-diffusion-xl-base-1.0"
     // O uno más rápido para pruebas: "CompVis/stable-diffusion-v1-4" (puede requerir prompts más específicos)
     // O "prompthero/openjourney-v4" (buena calidad general)
-    const HUGGING_FACE_MODEL_ID = modelId || "PrunaAI/runwayml-stable-diffusion-v1-5-turbo-tiny-green-smashed";
+    const HUGGING_FACE_MODEL_ID = modelId || "runwayml/stable-diffusion-v1-5";
     const API_URL = `https://api-inference.huggingface.co/models/${HUGGING_FACE_MODEL_ID}`;
 
     console.log(`[Img Gen] Solicitando imagen para prompt: "${prompt}" usando modelo: ${HUGGING_FACE_MODEL_ID}`);
