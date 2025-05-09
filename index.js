@@ -552,11 +552,7 @@ app.post("/api/generate-image", autenticarToken, async (req, res, next) => {
         console.error("[Img Gen] ❌ HUGGING_FACE_API_KEY no está configurada en el servidor.");
         return res.status(500).json({ error: "Servicio de generación de imágenes no configurado." });
     }
-
-    // Elige un modelo de Hugging Face. Ej: "stabilityai/stable-diffusion-xl-base-1.0"
-    // O uno más rápido para pruebas: "CompVis/stable-diffusion-v1-4" (puede requerir prompts más específicos)
-    // O "prompthero/openjourney-v4" (buena calidad general)
-    const HUGGING_FACE_MODEL_ID = modelId || "stabilityai/stable-diffusion-2-1";
+    const HUGGING_FACE_MODEL_ID = modelId || "CompVis/stable-diffusion-v1-4";
     const API_URL = `https://api-inference.huggingface.co/models/${HUGGING_FACE_MODEL_ID}`;
 
     console.log(`[Img Gen] Solicitando imagen para prompt: "${prompt}" usando modelo: ${HUGGING_FACE_MODEL_ID}`);
@@ -580,8 +576,7 @@ app.post("/api/generate-image", autenticarToken, async (req, res, next) => {
             console.log(`[Img Gen] ✅ Imagen generada para: "${prompt}"`);
             res.json({ imageUrl: imageSrc, originalPrompt: prompt });
         } else {
-            // Esto es menos probable si responseType es arraybuffer y el status es != 200
-            // Pero lo dejamos por si acaso la API cambia o el modelo devuelve error como texto
+           
             let errorMessage = `Error de Hugging Face: ${hfResponse.status}`;
              try { // Intenta parsear como texto si no es 200 pero sí un buffer
                 const errorText = Buffer.from(hfResponse.data, 'binary').toString();
