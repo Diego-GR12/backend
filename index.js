@@ -350,6 +350,7 @@ async function generarRespuestaIA(
     return `${langStrings.error}. (Detalle: ${detalleError})`;
   }
 }
+
 const generarImagen = async (prompt) => {
   const HUGGING_FACE_API_URL = "https://api-inference.huggingface.co/models/CompVis/stable-diffusion-v1-4";
   const HUGGING_FACE_API_KEY = process.env.HUGGING_FACE_API_KEY;
