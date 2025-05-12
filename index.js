@@ -350,7 +350,6 @@ async function generarRespuestaIA(
     return `${langStrings.error}. (Detalle: ${detalleError})`;
   }
 }
-
 const generarImagen = async (prompt) => {
   const HUGGING_FACE_API_URL = "https://api-inference.huggingface.co/models/CompVis/stable-diffusion-v1-4";
   const HUGGING_FACE_API_KEY = process.env.HUGGING_FACE_API_KEY;
@@ -371,7 +370,6 @@ const generarImagen = async (prompt) => {
     }
 
     const datos = await respuesta.json();
-    console.log("Imagen generada:", datos);
     return datos;
   } catch (error) {
     console.error("[Img Gen] ❌ Error al generar imagen:", error.message);
@@ -852,14 +850,18 @@ app.post("/api/generateText", autenticarToken, subir, async (req, res) => {
 });
 
 app.post("/api/generateImage", autenticarToken, async (req, res) => {
+  console.log("Solicitud recibida en /api/generateImage:", req.body);
+
   const { prompt } = req.body;
 
   if (!prompt || typeof prompt !== "string") {
+    console.error("Prompt no válido:", prompt);
     return res.status(400).json({ error: "Prompt no válido." });
   }
 
   try {
     const imagen = await generarImagen(prompt);
+    console.log("Imagen generada correctamente:", imagen);
     res.status(200).json({ imagen });
   } catch (error) {
     console.error("[Generate Image] ❌ Error:", error.message);
