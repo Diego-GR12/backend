@@ -352,7 +352,7 @@ async function generarRespuestaIA(
 }
 
 const generarImagen = async (prompt) => {
-  const HUGGING_FACE_API_URL = "https://api-inference.huggingface.co/models/CompVis/stable-diffusion-v1-4";
+  const HUGGING_FACE_API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2";
   const HUGGING_FACE_API_KEY = process.env.HUGGING_FACE_API_KEY;
 
   try {
@@ -374,6 +374,9 @@ const generarImagen = async (prompt) => {
     return datos;
   } catch (error) {
     console.error("[Img Gen] ❌ Error al generar imagen:", error.message);
+    if (error.message.includes("404")) {
+      throw new Error("El modelo especificado no está disponible en Hugging Face.");
+    }
     throw error;
   }
 };
