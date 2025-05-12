@@ -352,7 +352,7 @@ async function generarRespuestaIA(
 }
 const generarImagen = async (prompt) => {
   const HUGGING_FACE_API_URL = "https://api-inference.huggingface.co/models/stabilityai/sdxl-turbo";
-  const HUGGING_FACE_API_KEY = process.env.HUGGING_FACE_API_KEY;
+  const HUGGING_FACE_API_KEY = process.env.HUGGING_FACE_API_KEY;  // Asegúrate de tener la clave en el entorno
 
   try {
     const respuesta = await fetch(HUGGING_FACE_API_URL, {
@@ -369,15 +369,9 @@ const generarImagen = async (prompt) => {
       throw new Error(`Error API Hugging Face (${respuesta.status}): ${errorTexto}`);
     }
 
+    // Asumiendo que la respuesta es un ArrayBuffer (imagen en base64)
     const arrayBuffer = await respuesta.arrayBuffer();
-
-    // Convertir arrayBuffer a base64 en el navegador
-    const base64Image = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result.split(',')[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(new Blob([arrayBuffer]));
-    });
+    const base64Image = Buffer.from(arrayBuffer).toString("base64");
 
     return base64Image;
   } catch (error) {
@@ -388,6 +382,7 @@ const generarImagen = async (prompt) => {
     throw error;
   }
 };
+
 
 
 app.post("/api/register", async (req, res, next) => {
