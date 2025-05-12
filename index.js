@@ -362,7 +362,7 @@ async function generarRespuestaIA(prompt, historialDB, textoPDF, modeloReq, temp
 }
 
 // --- Función Refinada para Generar y Guardar Imágenes ---
-async function generarYGuardarImagen(promptTexto, modeloId = "runwayml/stable-diffusion-v1-5") {
+async function generarYGuardarImagen(promptTexto, modeloId = "stabilityai/stable-diffusion-2-1-base") {
   // Usa la variable de entorno consistente
   if (!HUGGING_FACE_API_KEY) {
     console.error("[Img Gen] Error: HUGGING_FACE_API_KEY no está configurado.");
@@ -372,7 +372,7 @@ async function generarYGuardarImagen(promptTexto, modeloId = "runwayml/stable-di
     throw new Error("Se requiere un prompt de texto válido para generar la imagen.");
   }
 
-  const modeloSeleccionado = modeloId || "runwayml/stable-diffusion-v1-5"; // Asegura un default
+  const modeloSeleccionado = modeloId || "stabilityai/stable-diffusion-2-1-base"; // Asegura un default
   console.log(`[Img Gen] Solicitando imagen para prompt: "${promptTexto}" usando modelo: ${modeloSeleccionado}`);
   const HUGGING_FACE_API_URL = `https://api-inference.huggingface.co/models/${modeloSeleccionado}`;
   console.log(`[Img Gen Debug] Llamando a API URL: ${HUGGING_FACE_API_URL}`);
