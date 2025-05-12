@@ -370,8 +370,10 @@ const generarImagen = async (prompt) => {
       throw new Error(`Error API Hugging Face (${respuesta.status}): ${errorTexto}`);
     }
 
-    const datos = await respuesta.json();
-    return datos;
+    const arrayBuffer = await respuesta.arrayBuffer();
+    const base64Image = Buffer.from(arrayBuffer).toString("base64");
+
+    return base64Image;
   } catch (error) {
     console.error("[Img Gen] ❌ Error al generar imagen:", error.message);
     if (error.message.includes("404")) {
@@ -380,6 +382,7 @@ const generarImagen = async (prompt) => {
     throw error;
   }
 };
+
 
 app.post("/api/register", async (req, res, next) => {
   const { username, password } = req.body;
