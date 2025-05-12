@@ -351,7 +351,7 @@ async function generarRespuestaIA(
   }
 }
 const generarImagen = async (prompt) => {
-  const HUGGING_FACE_API_URL = "https://api-inference.huggingface.co/models/stabilityai/sdxl-turbo";
+  const HUGGING_FACE_API_URL = "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5";
   const HUGGING_FACE_API_KEY = process.env.HUGGING_FACE_API_KEY;  // Asegúrate de tener la clave en el entorno
 
   try {
