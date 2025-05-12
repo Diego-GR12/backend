@@ -352,7 +352,8 @@ async function generarRespuestaIA(
 }
 
 const generarImagen = async (prompt) => {
-  const HUGGING_FACE_API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2";
+ const HUGGING_FACE_API_URL = "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5";
+
   const HUGGING_FACE_API_KEY = process.env.HUGGING_FACE_API_KEY;
 
   try {
