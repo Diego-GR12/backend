@@ -350,12 +350,8 @@ async function generarRespuestaIA(
     return `${langStrings.error}. (Detalle: ${detalleError})`;
   }
 }
-
 const generarImagen = async (prompt) => {
- const HUGGING_FACE_API_URL = "https://api-inference.huggingface.co/models/stabilityai/sdxl-turbo";
-
-
-
+  const HUGGING_FACE_API_URL = "https://api-inference.huggingface.co/models/stabilityai/sdxl-turbo";
   const HUGGING_FACE_API_KEY = process.env.HUGGING_FACE_API_KEY;
 
   try {
@@ -374,7 +370,14 @@ const generarImagen = async (prompt) => {
     }
 
     const arrayBuffer = await respuesta.arrayBuffer();
-    const base64Image = Buffer.from(arrayBuffer).toString("base64");
+
+    // Convertir arrayBuffer a base64 en el navegador
+    const base64Image = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(new Blob([arrayBuffer]));
+    });
 
     return base64Image;
   } catch (error) {
