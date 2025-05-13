@@ -519,6 +519,7 @@ app.use((err, req, res, next) => {
 });
 
 // --- Iniciar Servidor ---
+const PORT = PUERTO || 3001;
 app.listen(PUERTO, () => {
     console.log(`\n🚀 Servidor en puerto ${PUERTO} | Modo: ${NODE_ENV}`);
     console.log(`🔗 Local: http://localhost:${PUERTO}`);
