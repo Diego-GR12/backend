@@ -406,13 +406,31 @@ app.get("/api/conversations", autenticarToken, async (req, res, next) => {
 
 app.get( "/api/conversations/:id/messages", autenticarToken, async (req, res, next) => {
     if (!supabase) return res.status(503).json({error: "BD no disponible"});
-    const { id } = req.params;
-    if (!id) return res.status(400).json({error:"ID de conversación requerido."})
+    const { id } = req.params; // Este es el conversationId
+    // Es buena práctica validar y parsear el ID si tu columna es numérica
+    const conversationIdInt = parseInt(id);
+    if (isNaN(conversationIdInt)) return res.status(400).json({error:"ID de conversación inválido."});
+
     try {
-      const { data: convOwner, error: ownerError } = await supabase.from("conversaciones").select("id").eq("id", id).eq("usuario_id", req.usuario.id).maybeSingle();
+      const { data: convOwner, error: ownerError } = await supabase
+        .from("conversaciones")
+        .select("id")
+        .eq("id", conversationIdInt) // Usar el ID parseado
+        .eq("usuario_id", req.usuario.id) // req.usuario.id debe ser el ID numérico del usuario
+        .maybeSingle();
+
       if(ownerError) throw ownerError;
       if (!convOwner) return res.status(404).json({ error: "Conversación no encontrada o no autorizada." });
-      const { data: mensajes, error } = await supabase.from("mensajes").select("rol, texto, fecha_envio").eq("conversacion_id", id).order("fecha_envio", { ascending: true });
+
+      // ***** MODIFICACIÓN CLAVE AQUÍ *****
+      const { data: mensajes, error } = await supabase
+        .from("mensajes")
+        // Selecciona las columnas que tu frontend necesite, incluyendo tipo_mensaje
+        .select("id, rol, texto, fecha_envio, es_error, tipo_mensaje")
+        .eq("conversacion_id", conversationIdInt) // Usar el ID parseado
+        .order("fecha_envio", { ascending: true });
+      // ***** FIN DE MODIFICACIÓN CLAVE *****
+
       if (error) throw error;
       res.json(mensajes || []);
     } catch (error) { next(error); }
@@ -453,69 +471,207 @@ app.post("/api/generateText", autenticarToken, subir, async (req, res, next) => 
     if (!supabase) return res.status(503).json({ error: "BD no disponible." });
     if (!clienteIA) return res.status(503).json({ error: "Servicio IA (Google) no disponible."});
 
-    const usuarioId = req.usuario.id;
-    const { prompt, conversationId: inputConversationId, modeloSeleccionado, temperatura, topP, idioma, archivosSeleccionados, } = req.body;
-    let archivosSeleccionadosArray = [];
-    try {
-        archivosSeleccionadosArray = Array.isArray(archivosSeleccionados) ? archivosSeleccionados : JSON.parse(archivosSeleccionados || "[]");
-    } catch(e) { return res.status(400).json({ error: "Formato de archivosSeleccionados inválido." }); }
+    const usuarioId = req.usuario.id; // Asumiendo que req.usuario.id es el ID numérico
+    const {
+        prompt,
+        conversationId: inputConversationId, // Puede ser string o undefined
+        modeloSeleccionado,
+        temperatura,
+        topP,
+        idioma,
+        archivosSeleccionados, // Esperado como un array de strings (nombres de archivo únicos) o un string JSON de dicho array
+    } = req.body;
 
-    let conversationId = inputConversationId;
+    let archivosSeleccionadosArray = [];
+    if (archivosSeleccionados) {
+        try {
+            archivosSeleccionadosArray = typeof archivosSeleccionados === 'string'
+                ? JSON.parse(archivosSeleccionados)
+                : archivosSeleccionados;
+            if (!Array.isArray(archivosSeleccionadosArray)) {
+                console.warn("[GenerateText] archivosSeleccionados procesado no es un array, usando array vacío.");
+                archivosSeleccionadosArray = [];
+            }
+        } catch(e) {
+            console.error("[GenerateText] Error parseando archivosSeleccionados:", e.message);
+            // Devuelve un error si el parseo falla y era un string
+            if (typeof archivosSeleccionados === 'string') {
+                 return res.status(400).json({ error: "Formato de archivosSeleccionados inválido (debe ser un array JSON de strings)." });
+            }
+            archivosSeleccionadosArray = []; // Si no era string y falló, usa vacío.
+        }
+    }
+
+
+    let conversationId = inputConversationId ? parseInt(inputConversationId) : null;
     let isNewConversation = false;
 
     try {
-        if (!conversationId) {
-            const { data, error } = await supabase.from("conversaciones").insert([{ usuario_id: usuarioId, titulo: (prompt?.trim().split(/\s+/).slice(0, 5).join(" ") || "Conversación nueva"), }]).select("id").single();
-            if (error) throw new Error("Error creando conversación: " + error.message);
+        if (!conversationId) { // Crear nueva conversación
+            const { data, error } = await supabase
+                .from("conversaciones")
+                .insert([{
+                    usuario_id: usuarioId,
+                    titulo: (prompt?.trim().split(/\s+/).slice(0, 5).join(" ") || "Conversación nueva"),
+                }])
+                .select("id")
+                .single(); // .single() espera una sola fila o error
+            if (error) throw new Error(`Error creando conversación: ${error.message} (Detalles: ${error.details || ''})`);
             conversationId = data.id;
             isNewConversation = true;
+        } else { // Usar conversación existente (validar pertenencia)
+            const { data: convCheck, error: convCheckError } = await supabase
+                .from("conversaciones")
+                .select("id")
+                .eq("id", conversationId)
+                .eq("usuario_id", usuarioId)
+                .maybeSingle();
+            if (convCheckError) throw convCheckError;
+            if (!convCheck) return res.status(404).json({error: "Conversación no encontrada o no pertenece al usuario."});
         }
 
+        // Guardar mensaje del usuario si existe
         if (prompt && prompt.trim() !== "") {
-            const { error: msgInsertError } = await supabase.from("mensajes").insert([{ conversacion_id: conversationId, rol: "user", texto: prompt }]);
-            if (msgInsertError) console.error("[GenerateText] Error guardando mensaje usuario:", msgInsertError.message);
-        }
-
-        const archivosNuevos = (req.files || []).filter(f => f.mimetype === 'application/pdf');
-        if (archivosNuevos.length > 0) {
-            const registrosArchivos = archivosNuevos.map((file) => ({ usuario_id: usuarioId, nombre_archivo_unico: file.filename, nombre_archivo_original: file.originalname,}));
-            const { error: errorInsertarArchivos } = await supabase.from("archivos_usuario").insert(registrosArchivos);
-            if (errorInsertarArchivos) {
-                archivosNuevos.forEach(async f => {try{await fs.unlink(f.path)}catch(e){}});
-                throw new Error("No se pudieron guardar los archivos PDF.");
+            // ***** MODIFICACIÓN CLAVE AQUÍ *****
+            const { error: msgInsertError } = await supabase.from("mensajes").insert([{
+                conversacion_id: conversationId,
+                rol: "user", // Asegúrate que 'user' es un valor de tu rol_enum
+                texto: prompt,
+                tipo_mensaje: "text" // Especificar tipo de mensaje
+            }]);
+            // ***** FIN DE MODIFICACIÓN CLAVE *****
+            if (msgInsertError) {
+                // Loggear el error pero no necesariamente detener el flujo si el resto puede continuar
+                console.error("[GenerateText] Error guardando mensaje de usuario en DB:", msgInsertError.message);
             }
         }
 
-        const nombresArchivos = [...archivosSeleccionadosArray, ...archivosNuevos.map((f) => f.filename),].filter(Boolean);
-        const contextoPDF = await generarContextoPDF(usuarioId, nombresArchivos);
-        
+        // Manejo de archivos PDF subidos (tu lógica original)
+        const archivosNuevosSubidos = (req.files || []).filter(f => f.mimetype === 'application/pdf');
+        if (archivosNuevosSubidos.length > 0) {
+            const registrosArchivos = archivosNuevosSubidos.map((file) => ({
+                usuario_id: usuarioId,
+                nombre_archivo_unico: file.filename,
+                nombre_archivo_original: file.originalname,
+            }));
+            const { error: errorInsertarArchivos } = await supabase.from("archivos_usuario").insert(registrosArchivos);
+            if (errorInsertarArchivos) {
+                archivosNuevosSubidos.forEach(async f => {try{await fs.unlink(f.path)}catch(e_fs){ console.error(`Error borrando archivo ${f.filename} tras fallo DB:`,e_fs) }});
+                throw new Error("No se pudieron guardar los metadatos de los archivos PDF.");
+            }
+        }
+
+        // Combinar archivos seleccionados existentes y nuevos
+        const nombresArchivosUnicosParaContexto = [
+            ...archivosSeleccionadosArray,
+            ...archivosNuevosSubidos.map((f) => f.filename),
+        ].filter(Boolean); // Eliminar nulos o undefined
+
+        const contextoPDF = await generarContextoPDF(usuarioId, nombresArchivosUnicosParaContexto);
+
         if ((!prompt || prompt.trim() === "") && (!contextoPDF || contextoPDF.startsWith("[Error"))) {
              return res.status(400).json({error:"Se requiere un prompt o archivos PDF válidos para generar una respuesta."});
         }
-        
-        const { data: historial, error: errorHist } = await supabase.from("mensajes").select("rol, texto").eq("conversacion_id", conversationId).order("fecha_envio", { ascending: true });
+
+        // Obtener historial de la conversación (sin cambios aquí, asume que generarRespuestaIA no necesita tipo_mensaje)
+        const { data: historial, error: errorHist } = await supabase
+            .from("mensajes")
+            .select("rol, texto") // Solo lo que necesite generarRespuestaIA
+            .eq("conversacion_id", conversationId)
+            .eq("es_error", false) // Podrías querer filtrar mensajes de error
+            .order("fecha_envio", { ascending: true });
         if (errorHist) throw new Error("Error cargando historial: " + errorHist.message);
 
         const promptParaIA = prompt || (idioma === 'es' ? "Resume el contenido de los archivos." : "Summarize the content of the files.");
-        const respuestaIA = await generarRespuestaIA(promptParaIA, historial, contextoPDF, modeloSeleccionado, parseFloat(temperatura), parseFloat(topP), idioma);
+        const respuestaIA = await generarRespuestaIA(promptParaIA, (historial || []), contextoPDF, modeloSeleccionado, parseFloat(temperatura), parseFloat(topP), idioma);
 
-        const { error: modelMsgError } = await supabase.from("mensajes").insert([{ conversacion_id: conversationId, rol: "model", texto: respuestaIA }]);
-        if (modelMsgError) console.error("[GenerateText] Error guardando mensaje modelo:", modelMsgError.message);
+        // Guardar respuesta del modelo
+        // ***** MODIFICACIÓN CLAVE AQUÍ *****
+        const { error: modelMsgError } = await supabase.from("mensajes").insert([{
+            conversacion_id: conversationId,
+            rol: "model", // Asegúrate que 'model' es un valor de tu rol_enum
+            texto: respuestaIA,
+            tipo_mensaje: "text" // Especificar tipo de mensaje
+        }]);
+        // ***** FIN DE MODIFICACIÓN CLAVE *****
+        if (modelMsgError) {
+             console.error("[GenerateText] Error guardando mensaje del modelo en DB:", modelMsgError.message);
+        }
 
         res.status(200).json({ respuesta: respuestaIA, isNewConversation, conversationId });
-    } catch (error) { next(error); }
+    } catch (error) {
+        // Si se creó una nueva conversación pero algo falló después, podrías considerar eliminarla
+        // if (isNewConversation && conversationId) { ... supabase.from("conversaciones").delete().eq("id", conversationId) ... }
+        next(error);
+    }
 });
-
 // Generar Imagen (con Clipdrop usando AXIOS)
 app.post("/api/generateImage", autenticarToken, async (req, res, next) => {
-    const { prompt } = req.body;
+    if (!supabase) return res.status(503).json({ error: "BD no disponible." });
+
+    // ***** MODIFICACIÓN CLAVE AQUÍ (obtener conversationId) *****
+    const { prompt, conversationId: inputConversationId } = req.body;
+    // ***** FIN DE MODIFICACIÓN CLAVE *****
+
     if (!prompt?.trim()) return res.status(400).json({ error: "Prompt inválido." });
     if (!CLIPDROP_API_KEY) return res.status(503).json({ error: "Servicio de imágenes (Clipdrop) no configurado." });
 
+    // ***** MODIFICACIÓN CLAVE AQUÍ (validar y parsear conversationId) *****
+    if (!inputConversationId) return res.status(400).json({ error: "ID de conversación requerido para guardar la imagen." });
+    const conversationId = parseInt(inputConversationId);
+    if (isNaN(conversationId)) return res.status(400).json({ error: "ID de conversación inválido." });
+    // ***** FIN DE MODIFICACIÓN CLAVE *****
+
     try {
-        const resultado = await generarImagenClipdrop(prompt.trim());
-        res.json({ message: "Imagen generada con Clipdrop.", fileName: resultado.fileName, imageUrl: resultado.url });
-    } catch (error) { next(error); }
+        // Verificar que la conversación pertenece al usuario autenticado
+        const { data: convOwner, error: ownerError } = await supabase
+            .from("conversaciones")
+            .select("id")
+            .eq("id", conversationId)
+            .eq("usuario_id", req.usuario.id) // req.usuario.id debe ser el ID numérico
+            .maybeSingle();
+
+        if (ownerError) throw ownerError;
+        if (!convOwner) return res.status(404).json({ error: "Conversación no encontrada o no autorizada." });
+
+        const resultadoImagen = await generarImagenClipdrop(prompt.trim()); // Tu función original
+
+        // ***** MODIFICACIÓN CLAVE AQUÍ (guardar mensaje de imagen en DB) *****
+        const { data: mensajeGuardado, error: msgInsertError } = await supabase.from("mensajes").insert([{
+            conversacion_id: conversationId,
+            rol: "model", // La imagen es una respuesta del "modelo"
+            texto: resultadoImagen.url, // Guardamos la URL relativa de la imagen
+            tipo_mensaje: "image"    // Marcamos como tipo imagen
+            // es_error se mantendrá en su valor DEFAULT (FALSE) que definiste en la tabla
+        }]).select("id").single(); // Opcional: .select() si necesitas el ID del mensaje guardado
+        // ***** FIN DE MODIFICACIÓN CLAVE *****
+
+        if (msgInsertError) {
+            console.error("[GenerateImage] Error guardando mensaje de imagen en DB:", msgInsertError.message);
+            // Considera si eliminar el archivo de imagen del disco si falla el guardado en DB
+            // await fs.unlink(path.join(directorioImagenesGeneradas, resultadoImagen.fileName));
+            return res.status(207).json({ // 207 Multi-Status
+                message: "Imagen generada pero ocurrió un error al guardarla en la conversación.",
+                fileName: resultadoImagen.fileName,
+                imageUrl: resultadoImagen.url,
+                errorDB: msgInsertError.message
+            });
+        }
+
+        res.json({
+            message: "Imagen generada y guardada en conversación.",
+            fileName: resultadoImagen.fileName,
+            imageUrl: resultadoImagen.url,
+            conversationId: conversationId, // Devolver conversationId es útil para el frontend
+            messageId: mensajeGuardado?.id // Opcional: el ID del mensaje guardado
+        });
+    } catch (error) {
+        // Asegúrate de que los errores de generarImagenClipdrop también se manejen bien
+        if (error.status && error.message.includes("Clipdrop")) { // Errores personalizados de generarImagenClipdrop
+             return res.status(error.status).json({error: error.message});
+        }
+        next(error);
+    }
 });
 
 // --- Servir Archivos Estáticos ---
