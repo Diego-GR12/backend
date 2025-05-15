@@ -41,7 +41,7 @@ const JWT_OPTIONS = { expiresIn: "1h" };
 
 const SUPABASE_PDF_BUCKET = "user-pdfs";
 // RECUERDA REEMPLAZAR "generated-images" SI EL SLUG DE TU BUCKET ES DIFERENTE
-const SUPABASE_IMAGES_BUCKET = "generated-images";
+const SUPABASE_IMAGES_BUCKET = "generated-images"; // <-- ¡¡AJUSTA ESTO!!
 
 // --- Verificaciones de Startup ---
 console.log("[Startup] JWT_SECRET cargado:", JWT_SECRET ? `${JWT_SECRET.substring(0, 3)}... (long: ${JWT_SECRET.length})` : "NO CARGADO!");
@@ -195,7 +195,7 @@ app.post("/api/register", async (req, res, next) => {
     const { data, error } = await supabase.from("usuarios").insert([{ nombre_usuario: username, contrasena_hash: contrasenaHasheada }]).select("id").single();
     if (error) {
       if (error.code === "23505") return res.status(409).json({ error: "Nombre de usuario ya existe." });
-      throw error; // Pasa al manejador de errores global
+      throw error;
     }
     res.status(201).json({ message: "Registro exitoso.", userId: data.id });
   } catch (error) { next(error); }
@@ -207,7 +207,7 @@ app.post("/api/login", async (req, res, next) => {
   if (!username || !password) return res.status(400).json({ error: "Usuario/contraseña requeridos." });
   try {
     const { data: usuarios, error } = await supabase.from("usuarios").select("id, nombre_usuario, contrasena_hash").eq("nombre_usuario", username).limit(1).single();
-    if (error || !usuarios) return res.status(401).json({ error: "Credenciales inválidas." }); // Puede ser error o usuario no encontrado
+    if (error || !usuarios) return res.status(401).json({ error: "Credenciales inválidas." });
     const passwordCorrecta = await bcrypt.compare(password, usuarios.contrasena_hash);
     if (!passwordCorrecta) return res.status(401).json({ error: "Credenciales inválidas." });
     const payload = { id: usuarios.id, username: usuarios.nombre_usuario };
@@ -231,27 +231,49 @@ app.get("/api/verify-auth", autenticarToken, (req, res) => {
 app.post("/api/files", autenticarToken, uploadArchivosPdf, async (req, res, next) => {
     if (!supabase) return res.status(503).json({error: "BD no disponible"});
     try {
-      const usuarioId = req.usuario.id; const archivosRecibidos = req.files;
+      const usuarioId = req.usuario.id;
+      const archivosRecibidos = req.files;
       if (!archivosRecibidos || archivosRecibidos.length === 0) return res.status(400).json({ error: "No se subieron archivos PDF."});
-      const resultadosSubidaDB = []; const erroresSubidaStorage = [];
-      for (const file of archivosRecibidos) {
-          const nombreArchivoSupabase = `${usuarioId}/${Date.now()}-${file.originalname.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9.\-_]/gi, '_')}`;
-          const { error: uploadError } = await supabase.storage.from(SUPABASE_PDF_BUCKET).upload(nombreArchivoSupabase, file.buffer, { contentType: file.mimetype, upsert: false });
-          if (uploadError) { console.error(`[Supabase Storage PDF Upload] Error ${file.originalname}:`, uploadError); erroresSubidaStorage.push({ originalName: file.originalname, error: uploadError.message });
-          } else { resultadosSubidaDB.push({ usuario_id: usuarioId, nombre_archivo_unico: nombreArchivoSupabase, nombre_archivo_original: file.originalname }); }
+
+      const resultadosSubidaDB = [];
+      const errStor = []; // Asegurar que errStor está definido aquí
+
+      for (const f of archivosRecibidos) {
+          const nombreSupa = `${usuarioId}/${Date.now()}-${f.originalname.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9.\-_]/gi, '_')}`;
+          console.log(`[Storage Upload Debug /api/files] Intentando subir '${f.originalname}' como '${nombreSupa}' al bucket '${SUPABASE_PDF_BUCKET}'`);
+          if (!f.buffer) {
+              console.error(`[Storage Upload Debug /api/files] Error: f.buffer no existe para el archivo ${f.originalname}.`);
+              errStor.push({ originalName: f.originalname, generatedName: nombreSupa, errorDetails: { message: "f.buffer is missing" } });
+              continue;
+          }
+          const { error: uE } = await supabase.storage.from(SUPABASE_PDF_BUCKET).upload(nombreSupa, f.buffer, { contentType: f.mimetype, upsert: false });
+          if (uE) {
+              console.error(`[Storage Upload Fail /api/files] Error detallado al subir '${nombreSupa}' (Original: ${f.originalname}):`, JSON.stringify(uE, null, 2));
+              errStor.push({ originalName: f.originalname, generatedName: nombreSupa, errorDetails: uE });
+          } else {
+              console.log(`[Storage Upload Success /api/files] Subido '${nombreSupa}' exitosamente.`);
+              resultadosSubidaDB.push({ usuario_id: usuarioId, nombre_archivo_unico: nombreSupa, nombre_archivo_original: f.originalname });
+          }
       }
       if (resultadosSubidaDB.length > 0) {
           const { error: dbInsertError } = await supabase.from("archivos_usuario").insert(resultadosSubidaDB);
           if (dbInsertError) {
-            console.error("[DB Insert PDF Meta] Error:", dbInsertError);
+            console.error("[DB Insert PDF Meta /api/files] Error:", dbInsertError);
             for (const subido of resultadosSubidaDB) {
                 const { error: removeError } = await supabase.storage.from(SUPABASE_PDF_BUCKET).remove([subido.nombre_archivo_unico]);
-                if (removeError) console.error("Error limpiando PDF de Storage tras fallo DB:", removeError.message);
+                if (removeError) console.error("Error limpiando PDF de Storage tras fallo DB (/api/files):", removeError.message);
             }
             return next(new Error(`Error guardando metadatos en DB: ${dbInsertError.message}`));
           }
       }
-      if (erroresSubidaStorage.length > 0) { return res.status(resultadosSubidaDB.length > 0 ? 207:400).json({ mensaje: resultadosSubidaDB.length > 0 ? "Algunos PDF subidos, otros fallaron.":"No se pudo subir ningún PDF.", subidos: resultadosSubidaDB.map(r => r.nombre_archivo_original), errores: erroresSubidaStorage});}
+      // Modificado para dar mejor mensaje de error al frontend
+      if (errStor.length > 0) {
+          return res.status(resultadosSubidaDB.length > 0 ? 207 : 400).json({
+              mensaje: resultadosSubidaDB.length > 0 ? "Algunos PDF subidos, otros fallaron." : "No se pudo subir ningún PDF.",
+              subidos: resultadosSubidaDB.map(r => r.nombre_archivo_original),
+              errores: errStor.map(e => ({ originalName: e.originalName, error: e.errorDetails?.message || "Error desconocido en la subida" }))
+          });
+      }
       res.status(200).json({ mensaje: "PDFs subidos y registrados." });
     } catch (error) { next(error); }
 });
@@ -265,7 +287,7 @@ app.get("/api/files", autenticarToken, async (req, res, next) => {
     } catch (error) { next(error); }
 });
 
-app.delete( "/api/files/:rutaSupabaseArchivo(.*)", autenticarToken, async (req, res, next) => {
+app.delete( "/api/files/:rutaSupabaseArchivo(.*)", autenticarToken, async (req, res, next) => { // (.*) para capturar rutas con /
     if (!supabase) return res.status(503).json({error: "BD no disponible"});
     const idUsuario = req.usuario.id; const rutaSupabaseArchivo = req.params.rutaSupabaseArchivo;
     if(!rutaSupabaseArchivo) return res.status(400).json({error: "Ruta de archivo Supabase no especificada."});
@@ -273,7 +295,8 @@ app.delete( "/api/files/:rutaSupabaseArchivo(.*)", autenticarToken, async (req, 
       const { data: archivoMeta, error: metaError } = await supabase.from("archivos_usuario").select("id").eq("usuario_id", idUsuario).eq("nombre_archivo_unico", rutaSupabaseArchivo).single();
       if (metaError || !archivoMeta) { if (metaError && metaError.code !== 'PGRST116') { console.error("[Delete File Meta Error]", metaError); throw metaError; } return res.status(404).json({ error: "Archivo no encontrado o no pertenece al usuario." });}
       const { error: storageDeleteError } = await supabase.storage.from(SUPABASE_PDF_BUCKET).remove([rutaSupabaseArchivo]);
-      if (storageDeleteError) { console.error("[Supabase Storage Delete Error]", storageDeleteError.message); throw new Error(`Error borrando PDF de Storage: ${storageDeleteError.message}`); }
+      // Incluso si storageDeleteError existe (ej: archivo ya no estaba en storage), intentamos borrar de DB
+      if (storageDeleteError) { console.warn("[Supabase Storage Delete Warning/Error]", storageDeleteError.message); /* No necesariamente lanzar error aquí */ }
       const { error: dbDeleteError } = await supabase.from("archivos_usuario").delete().eq("id", archivoMeta.id);
       if (dbDeleteError) { console.error("[DB Delete PDF Meta Error]", dbDeleteError.message); throw new Error(`Error eliminando metadato PDF de DB: ${dbDeleteError.message}.`); }
       res.json({ message: "Archivo PDF eliminado." });
@@ -338,13 +361,37 @@ app.put( "/api/conversations/:id/title", autenticarToken, async (req, res, next)
 // --- RUTAS PRINCIPALES DE IA ---
 app.post("/api/generateText", autenticarToken, subirEnGenerateText, async (req, res, next) => {
     if (!supabase || !clienteIA) return res.status(503).json({ error: "Servicio(s) no disponible(s)." });
-    const usuarioId = req.usuario.id; const { prompt, conversationId: inputConvId, modeloSeleccionado, temperatura, topP, idioma, archivosSeleccionados } = req.body;
+    const usuarioId = req.usuario.id;
+    const { prompt, conversationId: inputConvId, modeloSeleccionado, temperatura, topP, idioma, archivosSeleccionados } = req.body;
     const archivosPdfNuevosSubidos = req.files || [];
-    let archivosSelParseados = []; if (archivosSeleccionados) { try { archivosSelParseados = typeof archivosSeleccionados === 'string' ? JSON.parse(archivosSeleccionados) : archivosSeleccionados; if (!Array.isArray(archivosSelParseados)) archivosSelParseados = []; } catch(e) { if (typeof archivosSeleccionados === 'string') return res.status(400).json({ error: "Formato archivosSeleccionados inválido." }); archivosSelParseados = []; }}
-    let conversationId = inputConvId ? parseInt(inputConvId) : null; let isNewConversation = false; const rutasSupabaseNuevosArchivos = [];
+
+    let archivosSelParseados = [];
+    if (archivosSeleccionados) {
+        try {
+            archivosSelParseados = typeof archivosSeleccionados === 'string' ? JSON.parse(archivosSeleccionados) : archivosSeleccionados;
+            if (!Array.isArray(archivosSelParseados)) archivosSelParseados = [];
+        } catch(e) {
+            if (typeof archivosSeleccionados === 'string') return res.status(400).json({ error: "Formato archivosSeleccionados inválido." });
+            archivosSelParseados = [];
+        }
+    }
+
+    let conversationId = inputConvId ? parseInt(inputConvId) : null;
+    let isNewConversation = false;
+    const rutasSupabaseNuevosArchivos = [];
+    const errStor = [];
+    const regDB = [];
+
     try {
-        if (!conversationId) { const { data, error } = await supabase.from("conversaciones").insert([{ usuario_id: usuarioId, titulo: (prompt?.trim().substring(0,50) || "Conversación") }]).select("id").single(); if (error) throw new Error(`Error creando conv: ${error.message}`); conversationId = data.id; isNewConversation = true;
-        } else { const { data:c, error:ce } = await supabase.from("conversaciones").select("id").eq("id",conversationId).eq("usuario_id",usuarioId).maybeSingle(); if(ce) throw ce; if(!c) return res.status(404).json({error:"Conversación no encontrada."});}
+        if (!conversationId) {
+            const { data, error } = await supabase.from("conversaciones").insert([{ usuario_id: usuarioId, titulo: (prompt?.trim().substring(0,50) || "Conversación") }]).select("id").single();
+            if (error) throw new Error(`Error creando conv: ${error.message}`);
+            conversationId = data.id; isNewConversation = true;
+        } else {
+            const { data:c, error:ce } = await supabase.from("conversaciones").select("id").eq("id",conversationId).eq("usuario_id",usuarioId).maybeSingle();
+            if(ce) throw ce;
+            if(!c) return res.status(404).json({error:"Conversación no encontrada."});
+        }
 
         if (prompt?.trim()) {
             const { error: userMsgErr } = await supabase.from("mensajes").insert([{ conversacion_id: conversationId, rol: "user", texto: prompt, tipo_mensaje: "text" }]);
@@ -352,23 +399,38 @@ app.post("/api/generateText", autenticarToken, subirEnGenerateText, async (req, 
         }
 
         if (archivosPdfNuevosSubidos.length > 0) {
-            const regDB = []; const errStor = [];
             for (const f of archivosPdfNuevosSubidos) {
                 const nombreSupa = `${usuarioId}/${Date.now()}-${f.originalname.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9.\-_]/gi, '_')}`;
+                console.log(`[Storage Upload Debug /api/generateText] Intentando subir '${f.originalname}' como '${nombreSupa}' al bucket '${SUPABASE_PDF_BUCKET}'`);
+                if (!f.buffer) {
+                    console.error(`[Storage Upload Debug /api/generateText] Error: f.buffer no existe para el archivo ${f.originalname}.`);
+                    errStor.push({ originalName: f.originalname, generatedName: nombreSupa, errorDetails: { message: "f.buffer is missing" }});
+                    continue;
+                }
                 const {error:uE} = await supabase.storage.from(SUPABASE_PDF_BUCKET).upload(nombreSupa, f.buffer, {contentType:f.mimetype});
-                if(uE){errStor.push(f.originalname)}else{rutasSupabaseNuevosArchivos.push(nombreSupa); regDB.push({usuario_id:usuarioId, nombre_archivo_unico:nombreSupa, nombre_archivo_original:f.originalname});}
+                if(uE){
+                    console.error(`[Storage Upload Fail /api/generateText] Error detallado al subir '${nombreSupa}' (Original: ${f.originalname}):`, JSON.stringify(uE, null, 2));
+                    errStor.push({ originalName: f.originalname, generatedName: nombreSupa, errorDetails: uE });
+                } else {
+                    console.log(`[Storage Upload Success /api/generateText] Subido '${nombreSupa}' exitosamente.`);
+                    rutasSupabaseNuevosArchivos.push(nombreSupa);
+                    regDB.push({usuario_id:usuarioId, nombre_archivo_unico:nombreSupa, nombre_archivo_original:f.originalname});
+                }
             }
             if(regDB.length>0){
                 const{error:iE}=await supabase.from("archivos_usuario").insert(regDB);
                 if(iE){
-                    for(const r of rutasSupabaseNuevosArchivos){
+                    console.error("[DB Insert PDF Meta /api/generateText] Error:", iE);
+                    for(const r of rutasSupabaseNuevosArchivos){ // Usar rutasSupabaseNuevosArchivos que sí se subieron a Storage
                         const { error: remErr } = await supabase.storage.from(SUPABASE_PDF_BUCKET).remove([r]);
-                        if (remErr) console.error("Fallo limpieza Storage tras error DB:", remErr.message);
+                        if (remErr) console.error("Fallo limpieza Storage tras error DB (/api/generateText):", remErr.message);
                     }
                     throw new Error("Fallo guardado meta PDF nuevos.");
                 }
             }
-            if(errStor.length>0) console.warn("Fallaron en Storage:",errStor);
+            if(errStor.length>0) {
+                console.warn(`Fallaron en Storage durante generateText: ${errStor.map(e=>e.originalName).join(', ')}`);
+            }
         }
 
         const todasRutasSupaCtx = [...archivosSelParseados, ...rutasSupabaseNuevosArchivos].filter(Boolean);
@@ -381,6 +443,14 @@ app.post("/api/generateText", autenticarToken, subirEnGenerateText, async (req, 
         const { error: modelMsgErr } = await supabase.from("mensajes").insert([{conversacion_id:conversationId, rol:"model", texto:respuestaIA, tipo_mensaje:"text"}]);
         if (modelMsgErr) console.error("Error guardando msg model:", modelMsgErr.message);
 
+        if (errStor.length > 0) {
+            return res.status(207).json({
+                respuesta: respuestaIA,
+                isNewConversation,
+                conversationId,
+                uploadErrors: errStor.map(e=>({originalName: e.originalName, error: e.errorDetails?.message || "Error desconocido en la subida"}))
+            });
+        }
         res.status(200).json({ respuesta: respuestaIA, isNewConversation, conversationId });
     } catch (error) { next(error); }
 });
