@@ -1,5 +1,3 @@
-// --- START OF FILE index.js ---
-
 // --- Imports ---
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import express from "express";
@@ -62,9 +60,21 @@ try {
 
 let supabase;
 try {
-  if (SUPABASE_URL && SUPABASE_KEY) { supabase = createClient(SUPABASE_URL, SUPABASE_KEY); console.log("✅ Supabase client creado."); }
-  else { supabase = null; console.warn("⚠️ Supabase NO inicializado (sin URL/KEY)."); }
-} catch (e) { console.error("🚨 Error Supabase client:", e.message); supabase = null; }
+  // LOGS DE DEPURACIÓN INMEDIATOS PARA VARIABLES DE SUPABASE
+  console.log("[Env Vars Check Before Supabase Init] SUPABASE_URL:", SUPABASE_URL ? `Cargada (longitud: ${SUPABASE_URL.length})` : "NO CARGADA O VACÍA");
+  console.log("[Env Vars Check Before Supabase Init] SUPABASE_KEY:", SUPABASE_KEY ? `Cargada (primeros 3 chars: ${SUPABASE_KEY.substring(0,3)}..., longitud: ${SUPABASE_KEY.length})` : "NO CARGADA O VACÍA");
+
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    console.log("✅ Supabase client creado.");
+  } else {
+    supabase = null;
+    console.warn("⚠️ Supabase NO inicializado (sin URL/KEY). Esto causará errores en operaciones de DB y Storage.");
+  }
+} catch (e) {
+  console.error("🚨 Error Supabase client al inicializar:", e.message);
+  supabase = null;
+}
 
 // --- Middlewares ---
 app.use(cors({ origin: (o, cb) => cb(null, o || true), credentials: true }));
@@ -153,7 +163,7 @@ async function generarRespuestaIA( prompt, historialDB, textoPDF, modeloReq, tem
 async function generarImagenClipdrop(promptTexto) {
     if (!CLIPDROP_API_KEY) throw new Error("Servicio de imágenes (Clipdrop) no disponible (sin API key).");
     if (!promptTexto?.trim()) throw new Error("Prompt inválido para Clipdrop.");
-    if (!supabase) throw new Error("Supabase no disponible para guardar imagen.");
+    if (!supabase) throw new Error("Supabase no disponible para guardar imagen."); // Chequeo importante
     const CLIPDROP_API_URL = "https://clipdrop-api.co/text-to-image/v1";
     console.log(`[Img Gen Clipdrop Axios] Solicitando para: "${promptTexto}"`);
     const form = new FormData();
@@ -164,16 +174,26 @@ async function generarImagenClipdrop(promptTexto) {
         const tipoMime = response.headers['content-type'] || 'image/png';
         const extension = tipoMime.includes('png') ? 'png' : (tipoMime.includes('jpeg') ? 'jpeg' : 'out');
         const nombreArchivoImagenOriginal = `${Date.now()}-clipdrop-${promptTexto.substring(0,15).replace(/[^a-z0-9]/gi, '_')}.${extension}`;
-        const supabaseImagePath = nombreArchivoImagenOriginal;
+        const supabaseImagePath = nombreArchivoImagenOriginal; // Ruta dentro del bucket (sin subcarpetas aquí)
 
+        console.log(`[Supabase Storage Img Upload Debug] Intentando subir '${nombreArchivoImagenOriginal}' como '${supabaseImagePath}' al bucket '${SUPABASE_IMAGES_BUCKET}'`);
         const { error: uploadError } = await supabase.storage
             .from(SUPABASE_IMAGES_BUCKET).upload(supabaseImagePath, bufferImagen, { contentType: tipoMime, upsert: true });
-        if (uploadError) { console.error(`[Supabase Storage] Error subiendo imagen ${supabaseImagePath}:`, uploadError); throw new Error("Error al guardar la imagen generada en el almacenamiento.");}
+        if (uploadError) {
+            console.error(`[Supabase Storage Img Upload Fail] Error detallado al subir '${supabaseImagePath}':`, JSON.stringify(uploadError, null, 2));
+            throw new Error(`Error al guardar la imagen generada en el almacenamiento: ${uploadError.message}`);
+        }
+        console.log(`[Supabase Storage Img Upload Success] Subida '${supabaseImagePath}' exitosamente.`);
 
         const { data: publicUrlData } = supabase.storage.from(SUPABASE_IMAGES_BUCKET).getPublicUrl(supabaseImagePath);
-        if (!publicUrlData || !publicUrlData.publicUrl) { console.error(`[Supabase Storage] Error obteniendo URL pública para ${supabaseImagePath}`); throw new Error("Error al obtener la URL de la imagen generada.");}
+        if (!publicUrlData || !publicUrlData.publicUrl) {
+            console.error(`[Supabase Storage] Error obteniendo URL pública para ${supabaseImagePath}. Datos devueltos:`, publicUrlData);
+            // Si no podemos obtener la URL, el archivo subido es inútil y podría causar problemas. Intentar borrarlo.
+            await supabase.storage.from(SUPABASE_IMAGES_BUCKET).remove([supabaseImagePath]).catch(remErr => console.error(`Error al intentar borrar imagen ${supabaseImagePath} tras fallo de getPublicUrl:`, remErr));
+            throw new Error("Error al obtener la URL de la imagen generada (publicUrlData es nulo o no tiene publicUrl).");
+        }
 
-        console.log(`[Img Gen Clipdrop Axios] Guardada en Supabase: ${publicUrlData.publicUrl}`);
+        console.log(`[Img Gen Clipdrop Axios] Guardada en Supabase. URL Pública: ${publicUrlData.publicUrl}`);
         return { fileName: nombreArchivoImagenOriginal, url: publicUrlData.publicUrl };
     } catch (error) {
         let status = 500; let errorMsgParaUsuario = "Error desconocido generando imagen.";
@@ -184,7 +204,6 @@ async function generarImagenClipdrop(promptTexto) {
         const errToThrow = new Error(errorMsgParaUsuario); errToThrow.status = status; throw errToThrow;
     }
 }
-
 // --- Rutas API (Usuarios, Login, Logout, Auth) ---
 app.post("/api/register", async (req, res, next) => {
   if (!supabase) return res.status(503).json({error: "BD no disponible"});
@@ -234,11 +253,10 @@ app.post("/api/files", autenticarToken, uploadArchivosPdf, async (req, res, next
       const usuarioId = req.usuario.id;
       const archivosRecibidos = req.files;
       if (!archivosRecibidos || archivosRecibidos.length === 0) return res.status(400).json({ error: "No se subieron archivos PDF."});
-
       const resultadosSubidaDB = [];
-      const errStor = []; // Asegurar que errStor está definido aquí
-
+      const errStor = [];
       for (const f of archivosRecibidos) {
+          console.log("[Storage Upload Debug /api/files] usuarioId:", usuarioId); // LOG AÑADIDO
           const nombreSupa = `${usuarioId}/${Date.now()}-${f.originalname.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9.\-_]/gi, '_')}`;
           console.log(`[Storage Upload Debug /api/files] Intentando subir '${f.originalname}' como '${nombreSupa}' al bucket '${SUPABASE_PDF_BUCKET}'`);
           if (!f.buffer) {
@@ -266,7 +284,6 @@ app.post("/api/files", autenticarToken, uploadArchivosPdf, async (req, res, next
             return next(new Error(`Error guardando metadatos en DB: ${dbInsertError.message}`));
           }
       }
-      // Modificado para dar mejor mensaje de error al frontend
       if (errStor.length > 0) {
           return res.status(resultadosSubidaDB.length > 0 ? 207 : 400).json({
               mensaje: resultadosSubidaDB.length > 0 ? "Algunos PDF subidos, otros fallaron." : "No se pudo subir ningún PDF.",
@@ -277,7 +294,6 @@ app.post("/api/files", autenticarToken, uploadArchivosPdf, async (req, res, next
       res.status(200).json({ mensaje: "PDFs subidos y registrados." });
     } catch (error) { next(error); }
 });
-
 app.get("/api/files", autenticarToken, async (req, res, next) => {
     if (!supabase) return res.status(503).json({error: "BD no disponible"});
     try {
@@ -360,28 +376,23 @@ app.put( "/api/conversations/:id/title", autenticarToken, async (req, res, next)
 
 // --- RUTAS PRINCIPALES DE IA ---
 app.post("/api/generateText", autenticarToken, subirEnGenerateText, async (req, res, next) => {
-    if (!supabase || !clienteIA) return res.status(503).json({ error: "Servicio(s) no disponible(s)." });
+    if (!supabase) { console.error("Error: Cliente Supabase no inicializado en /api/generateText"); return res.status(503).json({ error: "Servicio de base de datos no disponible." }); }
+    if (!clienteIA) { console.error("Error: Cliente GoogleGenerativeAI no inicializado en /api/generateText"); return res.status(503).json({ error: "Servicio de IA no disponible." }); }
+
     const usuarioId = req.usuario.id;
+    console.log("[Storage Upload Debug /api/generateText] Iniciando. UsuarioId:", usuarioId); // LOG AÑADIDO
+
     const { prompt, conversationId: inputConvId, modeloSeleccionado, temperatura, topP, idioma, archivosSeleccionados } = req.body;
     const archivosPdfNuevosSubidos = req.files || [];
-
     let archivosSelParseados = [];
     if (archivosSeleccionados) {
-        try {
-            archivosSelParseados = typeof archivosSeleccionados === 'string' ? JSON.parse(archivosSeleccionados) : archivosSeleccionados;
-            if (!Array.isArray(archivosSelParseados)) archivosSelParseados = [];
-        } catch(e) {
-            if (typeof archivosSeleccionados === 'string') return res.status(400).json({ error: "Formato archivosSeleccionados inválido." });
-            archivosSelParseados = [];
-        }
+        try { archivosSelParseados = typeof archivosSeleccionados === 'string' ? JSON.parse(archivosSeleccionados) : archivosSeleccionados; if (!Array.isArray(archivosSelParseados)) archivosSelParseados = []; }
+        catch(e) { if (typeof archivosSeleccionados === 'string') return res.status(400).json({ error: "Formato archivosSeleccionados inválido." }); archivosSelParseados = []; }
     }
-
     let conversationId = inputConvId ? parseInt(inputConvId) : null;
     let isNewConversation = false;
     const rutasSupabaseNuevosArchivos = [];
-    const errStor = [];
-    const regDB = [];
-
+    const errStor = []; const regDB = [];
     try {
         if (!conversationId) {
             const { data, error } = await supabase.from("conversaciones").insert([{ usuario_id: usuarioId, titulo: (prompt?.trim().substring(0,50) || "Conversación") }]).select("id").single();
@@ -389,68 +400,37 @@ app.post("/api/generateText", autenticarToken, subirEnGenerateText, async (req, 
             conversationId = data.id; isNewConversation = true;
         } else {
             const { data:c, error:ce } = await supabase.from("conversaciones").select("id").eq("id",conversationId).eq("usuario_id",usuarioId).maybeSingle();
-            if(ce) throw ce;
-            if(!c) return res.status(404).json({error:"Conversación no encontrada."});
+            if(ce) throw ce; if(!c) return res.status(404).json({error:"Conversación no encontrada."});
         }
-
         if (prompt?.trim()) {
             const { error: userMsgErr } = await supabase.from("mensajes").insert([{ conversacion_id: conversationId, rol: "user", texto: prompt, tipo_mensaje: "text" }]);
             if (userMsgErr) console.error("Error guardando msg usr:", userMsgErr.message);
         }
-
         if (archivosPdfNuevosSubidos.length > 0) {
             for (const f of archivosPdfNuevosSubidos) {
+                console.log("[Storage Upload Debug /api/generateText] Dentro del bucle de archivos. Archivo actual:", f.originalname); // LOG AÑADIDO
                 const nombreSupa = `${usuarioId}/${Date.now()}-${f.originalname.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9.\-_]/gi, '_')}`;
                 console.log(`[Storage Upload Debug /api/generateText] Intentando subir '${f.originalname}' como '${nombreSupa}' al bucket '${SUPABASE_PDF_BUCKET}'`);
-                if (!f.buffer) {
-                    console.error(`[Storage Upload Debug /api/generateText] Error: f.buffer no existe para el archivo ${f.originalname}.`);
-                    errStor.push({ originalName: f.originalname, generatedName: nombreSupa, errorDetails: { message: "f.buffer is missing" }});
-                    continue;
-                }
+                if (!f.buffer) { console.error(`[Storage Upload Debug /api/generateText] Error: f.buffer no existe para ${f.originalname}.`); errStor.push({ originalName: f.originalname, generatedName: nombreSupa, errorDetails: { message: "f.buffer is missing" }}); continue; }
                 const {error:uE} = await supabase.storage.from(SUPABASE_PDF_BUCKET).upload(nombreSupa, f.buffer, {contentType:f.mimetype});
-                if(uE){
-                    console.error(`[Storage Upload Fail /api/generateText] Error detallado al subir '${nombreSupa}' (Original: ${f.originalname}):`, JSON.stringify(uE, null, 2));
-                    errStor.push({ originalName: f.originalname, generatedName: nombreSupa, errorDetails: uE });
-                } else {
-                    console.log(`[Storage Upload Success /api/generateText] Subido '${nombreSupa}' exitosamente.`);
-                    rutasSupabaseNuevosArchivos.push(nombreSupa);
-                    regDB.push({usuario_id:usuarioId, nombre_archivo_unico:nombreSupa, nombre_archivo_original:f.originalname});
-                }
+                if(uE){ console.error(`[Storage Upload Fail /api/generateText] Error detallado al subir '${nombreSupa}' (Original: ${f.originalname}):`, JSON.stringify(uE, null, 2)); errStor.push({ originalName: f.originalname, generatedName: nombreSupa, errorDetails: uE });
+                } else { console.log(`[Storage Upload Success /api/generateText] Subido '${nombreSupa}'.`); rutasSupabaseNuevosArchivos.push(nombreSupa); regDB.push({usuario_id:usuarioId, nombre_archivo_unico:nombreSupa, nombre_archivo_original:f.originalname});}
             }
             if(regDB.length>0){
                 const{error:iE}=await supabase.from("archivos_usuario").insert(regDB);
-                if(iE){
-                    console.error("[DB Insert PDF Meta /api/generateText] Error:", iE);
-                    for(const r of rutasSupabaseNuevosArchivos){ // Usar rutasSupabaseNuevosArchivos que sí se subieron a Storage
-                        const { error: remErr } = await supabase.storage.from(SUPABASE_PDF_BUCKET).remove([r]);
-                        if (remErr) console.error("Fallo limpieza Storage tras error DB (/api/generateText):", remErr.message);
-                    }
-                    throw new Error("Fallo guardado meta PDF nuevos.");
-                }
+                if(iE){ console.error("[DB Insert PDF Meta /api/generateText] Error:", iE); for(const r of rutasSupabaseNuevosArchivos){ const { error: remErr } = await supabase.storage.from(SUPABASE_PDF_BUCKET).remove([r]); if (remErr) console.error("Fallo limpieza Storage tras error DB (/api/generateText):", remErr.message); } throw new Error("Fallo guardado meta PDF nuevos."); }
             }
-            if(errStor.length>0) {
-                console.warn(`Fallaron en Storage durante generateText: ${errStor.map(e=>e.originalName).join(', ')}`);
-            }
+            if(errStor.length>0) { console.warn(`Fallaron en Storage durante generateText: ${errStor.map(e=>e.originalName).join(', ')}`); }
         }
-
         const todasRutasSupaCtx = [...archivosSelParseados, ...rutasSupabaseNuevosArchivos].filter(Boolean);
         const contextoPDF = await generarContextoPDF(usuarioId, todasRutasSupaCtx);
         if ((!prompt?.trim()) && (!contextoPDF || contextoPDF.startsWith("[Error"))) return res.status(400).json({error:"Prompt o PDF válidos requeridos."});
         const {data:hist, error:errH} = await supabase.from("mensajes").select("rol, texto").eq("conversacion_id",conversationId).eq("es_error",false).order("fecha_envio",{ascending:true}); if(errH) throw new Error("Error cargando historial: "+errH.message);
         const promptIA = prompt || (idioma==='es' ? "Resume archivos.":"Summarize files.");
         const respuestaIA = await generarRespuestaIA(promptIA, (hist||[]), contextoPDF, modeloSeleccionado, parseFloat(temperatura), parseFloat(topP), idioma);
-
         const { error: modelMsgErr } = await supabase.from("mensajes").insert([{conversacion_id:conversationId, rol:"model", texto:respuestaIA, tipo_mensaje:"text"}]);
         if (modelMsgErr) console.error("Error guardando msg model:", modelMsgErr.message);
-
-        if (errStor.length > 0) {
-            return res.status(207).json({
-                respuesta: respuestaIA,
-                isNewConversation,
-                conversationId,
-                uploadErrors: errStor.map(e=>({originalName: e.originalName, error: e.errorDetails?.message || "Error desconocido en la subida"}))
-            });
-        }
+        if (errStor.length > 0) { return res.status(207).json({ respuesta: respuestaIA, isNewConversation, conversationId, uploadErrors: errStor.map(e=>({originalName: e.originalName, error: e.errorDetails?.message || "Error desconocido en la subida"})) }); }
         res.status(200).json({ respuesta: respuestaIA, isNewConversation, conversationId });
     } catch (error) { next(error); }
 });
