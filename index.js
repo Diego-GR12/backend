@@ -18,11 +18,11 @@ import axios from 'axios';
 dotenv.config();
 const {
   PORT: PUERTO = 3001,
-  API_KEY, // API Key de Google Generative AI
+  API_KEY,
   JWT_SECRET,
   NODE_ENV = "development",
-  SUPABASE_URL,     // URL de tu proyecto Supabase (ej: https://qfhqjfpgyhmatyxIqpfl.supabase.co)
-  SUPABASE_KEY,     // Clave de API (anon key o service_role key) de tu proyecto Supabase
+  SUPABASE_URL,
+  SUPABASE_KEY,
   CLIPDROP_API_KEY,
 } = process.env;
 
@@ -39,15 +39,9 @@ const TOPP_POR_DEFECTO = 0.9;
 const IDIOMA_POR_DEFECTO = "es";
 const JWT_OPTIONS = { expiresIn: "1h" };
 
-// Nombres de los buckets en Supabase Storage
-const SUPABASE_PDF_BUCKET = "user-pdfs"; // Basado en tu URL del dashboard: qfhqjfpgyhmatyxIqpfl/.../user-pdfs
-
-// IMPORTANTE: VERIFICA EL NOMBRE INTERNO EXACTO DE TU BUCKET DE IMÁGENES GENERADAS
-// Ve a tu Dashboard de Supabase -> Storage -> Clic en tu bucket "imágenes generadas"
-// -> Mira la URL del navegador. La parte después de /buckets/ es el nombre que necesitas.
-// Ejemplos comunes: "generated-images", "imagenes-generadas".
-// ¡¡ASEGÚRATE DE QUE ESTE BUCKET SEA PÚBLICO!!
-const SUPABASE_IMAGES_BUCKET = "generated-images"; // <-- ¡¡REEMPLAZA ESTO SI ES DIFERENTE AL SLUG DE TU BUCKET!!
+const SUPABASE_PDF_BUCKET = "user-pdfs";
+// RECUERDA REEMPLAZAR "generated-images" SI EL SLUG DE TU BUCKET ES DIFERENTE
+const SUPABASE_IMAGES_BUCKET = "generated-images";
 
 // --- Verificaciones de Startup ---
 console.log("[Startup] JWT_SECRET cargado:", JWT_SECRET ? `${JWT_SECRET.substring(0, 3)}... (long: ${JWT_SECRET.length})` : "NO CARGADO!");
@@ -201,7 +195,7 @@ app.post("/api/register", async (req, res, next) => {
     const { data, error } = await supabase.from("usuarios").insert([{ nombre_usuario: username, contrasena_hash: contrasenaHasheada }]).select("id").single();
     if (error) {
       if (error.code === "23505") return res.status(409).json({ error: "Nombre de usuario ya existe." });
-      throw error;
+      throw error; // Pasa al manejador de errores global
     }
     res.status(201).json({ message: "Registro exitoso.", userId: data.id });
   } catch (error) { next(error); }
@@ -213,11 +207,11 @@ app.post("/api/login", async (req, res, next) => {
   if (!username || !password) return res.status(400).json({ error: "Usuario/contraseña requeridos." });
   try {
     const { data: usuarios, error } = await supabase.from("usuarios").select("id, nombre_usuario, contrasena_hash").eq("nombre_usuario", username).limit(1).single();
-    if (error || !usuarios) return res.status(401).json({ error: "Credenciales inválidas." });
+    if (error || !usuarios) return res.status(401).json({ error: "Credenciales inválidas." }); // Puede ser error o usuario no encontrado
     const passwordCorrecta = await bcrypt.compare(password, usuarios.contrasena_hash);
     if (!passwordCorrecta) return res.status(401).json({ error: "Credenciales inválidas." });
     const payload = { id: usuarios.id, username: usuarios.nombre_usuario };
-    if(!JWT_SECRET) throw new Error("JWT_SECRET no configurado");
+    if(!JWT_SECRET) { console.error("JWT_SECRET no está configurado!"); throw new Error("Error de configuración de autenticación."); }
     const token = jwt.sign(payload, JWT_SECRET, JWT_OPTIONS);
     res.cookie("token", token, COOKIE_OPTIONS);
     res.json({ message: "Login exitoso.", user: payload });
@@ -248,7 +242,14 @@ app.post("/api/files", autenticarToken, uploadArchivosPdf, async (req, res, next
       }
       if (resultadosSubidaDB.length > 0) {
           const { error: dbInsertError } = await supabase.from("archivos_usuario").insert(resultadosSubidaDB);
-          if (dbInsertError) { console.error("[DB Insert PDF Meta] Error:", dbInsertError); for (const subido of resultadosSubidaDB) { await supabase.storage.from(SUPABASE_PDF_BUCKET).remove([subido.nombre_archivo_unico]).catch(e => console.error("Error limpiando PDF de Storage tras fallo DB:", e)); } return next(new Error(`Error guardando metadatos en DB: ${dbInsertError.message}`)); }
+          if (dbInsertError) {
+            console.error("[DB Insert PDF Meta] Error:", dbInsertError);
+            for (const subido of resultadosSubidaDB) {
+                const { error: removeError } = await supabase.storage.from(SUPABASE_PDF_BUCKET).remove([subido.nombre_archivo_unico]);
+                if (removeError) console.error("Error limpiando PDF de Storage tras fallo DB:", removeError.message);
+            }
+            return next(new Error(`Error guardando metadatos en DB: ${dbInsertError.message}`));
+          }
       }
       if (erroresSubidaStorage.length > 0) { return res.status(resultadosSubidaDB.length > 0 ? 207:400).json({ mensaje: resultadosSubidaDB.length > 0 ? "Algunos PDF subidos, otros fallaron.":"No se pudo subir ningún PDF.", subidos: resultadosSubidaDB.map(r => r.nombre_archivo_original), errores: erroresSubidaStorage});}
       res.status(200).json({ mensaje: "PDFs subidos y registrados." });
@@ -264,7 +265,7 @@ app.get("/api/files", autenticarToken, async (req, res, next) => {
     } catch (error) { next(error); }
 });
 
-app.delete( "/api/files/:rutaSupabaseArchivo(.*)", autenticarToken, async (req, res, next) => { // (.*) para capturar rutas con /
+app.delete( "/api/files/:rutaSupabaseArchivo(.*)", autenticarToken, async (req, res, next) => {
     if (!supabase) return res.status(503).json({error: "BD no disponible"});
     const idUsuario = req.usuario.id; const rutaSupabaseArchivo = req.params.rutaSupabaseArchivo;
     if(!rutaSupabaseArchivo) return res.status(400).json({error: "Ruta de archivo Supabase no especificada."});
@@ -295,24 +296,11 @@ app.get( "/api/conversations/:id/messages", autenticarToken, async (req, res, ne
     const { id } = req.params;
     const conversationIdInt = parseInt(id);
     if (isNaN(conversationIdInt)) return res.status(400).json({error:"ID de conversación inválido."});
-
     try {
-      const { data: convOwner, error: ownerError } = await supabase
-        .from("conversaciones")
-        .select("id")
-        .eq("id", conversationIdInt)
-        .eq("usuario_id", req.usuario.id)
-        .maybeSingle();
-
+      const { data: convOwner, error: ownerError } = await supabase.from("conversaciones").select("id").eq("id", conversationIdInt).eq("usuario_id", req.usuario.id).maybeSingle();
       if(ownerError) throw ownerError;
       if (!convOwner) return res.status(404).json({ error: "Conversación no encontrada o no autorizada." });
-
-      const { data: mensajes, error } = await supabase
-        .from("mensajes")
-        .select("id, rol, texto, fecha_envio, es_error, tipo_mensaje")
-        .eq("conversacion_id", conversationIdInt)
-        .order("fecha_envio", { ascending: true });
-
+      const { data: mensajes, error } = await supabase.from("mensajes").select("id, rol, texto, fecha_envio, es_error, tipo_mensaje").eq("conversacion_id", conversationIdInt).order("fecha_envio", { ascending: true });
       if (error) throw error;
       res.json(mensajes || []);
     } catch (error) { next(error); }
@@ -357,15 +345,42 @@ app.post("/api/generateText", autenticarToken, subirEnGenerateText, async (req, 
     try {
         if (!conversationId) { const { data, error } = await supabase.from("conversaciones").insert([{ usuario_id: usuarioId, titulo: (prompt?.trim().substring(0,50) || "Conversación") }]).select("id").single(); if (error) throw new Error(`Error creando conv: ${error.message}`); conversationId = data.id; isNewConversation = true;
         } else { const { data:c, error:ce } = await supabase.from("conversaciones").select("id").eq("id",conversationId).eq("usuario_id",usuarioId).maybeSingle(); if(ce) throw ce; if(!c) return res.status(404).json({error:"Conversación no encontrada."});}
-        if (prompt?.trim()) { await supabase.from("mensajes").insert([{ conversacion_id: conversationId, rol: "user", texto: prompt, tipo_mensaje: "text" }]).catch(e => console.error("Error guardando msg usr:",e));}
-        if (archivosPdfNuevosSubidos.length > 0) { const regDB = []; const errStor = []; for (const f of archivosPdfNuevosSubidos) { const nombreSupa = `${usuarioId}/${Date.now()}-${f.originalname.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9.\-_]/gi, '_')}`; const {error:uE} = await supabase.storage.from(SUPABASE_PDF_BUCKET).upload(nombreSupa, f.buffer, {contentType:f.mimetype}); if(uE){errStor.push(f.originalname)}else{rutasSupabaseNuevosArchivos.push(nombreSupa); regDB.push({usuario_id:usuarioId, nombre_archivo_unico:nombreSupa, nombre_archivo_original:f.originalname});}} if(regDB.length>0){const{error:iE}=await supabase.from("archivos_usuario").insert(regDB); if(iE){for(const r of rutasSupabaseNuevosArchivos){await supabase.storage.from(SUPABASE_PDF_BUCKET).remove([r]).catch(e=>console.error("Fallo limpieza S:",e))} throw new Error("Fallo guardado meta PDF nuevos.");}} if(errStor.length>0) console.warn("Fallaron en Storage:",errStor);}
+
+        if (prompt?.trim()) {
+            const { error: userMsgErr } = await supabase.from("mensajes").insert([{ conversacion_id: conversationId, rol: "user", texto: prompt, tipo_mensaje: "text" }]);
+            if (userMsgErr) console.error("Error guardando msg usr:", userMsgErr.message);
+        }
+
+        if (archivosPdfNuevosSubidos.length > 0) {
+            const regDB = []; const errStor = [];
+            for (const f of archivosPdfNuevosSubidos) {
+                const nombreSupa = `${usuarioId}/${Date.now()}-${f.originalname.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9.\-_]/gi, '_')}`;
+                const {error:uE} = await supabase.storage.from(SUPABASE_PDF_BUCKET).upload(nombreSupa, f.buffer, {contentType:f.mimetype});
+                if(uE){errStor.push(f.originalname)}else{rutasSupabaseNuevosArchivos.push(nombreSupa); regDB.push({usuario_id:usuarioId, nombre_archivo_unico:nombreSupa, nombre_archivo_original:f.originalname});}
+            }
+            if(regDB.length>0){
+                const{error:iE}=await supabase.from("archivos_usuario").insert(regDB);
+                if(iE){
+                    for(const r of rutasSupabaseNuevosArchivos){
+                        const { error: remErr } = await supabase.storage.from(SUPABASE_PDF_BUCKET).remove([r]);
+                        if (remErr) console.error("Fallo limpieza Storage tras error DB:", remErr.message);
+                    }
+                    throw new Error("Fallo guardado meta PDF nuevos.");
+                }
+            }
+            if(errStor.length>0) console.warn("Fallaron en Storage:",errStor);
+        }
+
         const todasRutasSupaCtx = [...archivosSelParseados, ...rutasSupabaseNuevosArchivos].filter(Boolean);
         const contextoPDF = await generarContextoPDF(usuarioId, todasRutasSupaCtx);
         if ((!prompt?.trim()) && (!contextoPDF || contextoPDF.startsWith("[Error"))) return res.status(400).json({error:"Prompt o PDF válidos requeridos."});
         const {data:hist, error:errH} = await supabase.from("mensajes").select("rol, texto").eq("conversacion_id",conversationId).eq("es_error",false).order("fecha_envio",{ascending:true}); if(errH) throw new Error("Error cargando historial: "+errH.message);
         const promptIA = prompt || (idioma==='es' ? "Resume archivos.":"Summarize files.");
         const respuestaIA = await generarRespuestaIA(promptIA, (hist||[]), contextoPDF, modeloSeleccionado, parseFloat(temperatura), parseFloat(topP), idioma);
-        await supabase.from("mensajes").insert([{conversacion_id:conversationId, rol:"model", texto:respuestaIA, tipo_mensaje:"text"}]).catch(e=>console.error("Error guardando msg model:",e));
+
+        const { error: modelMsgErr } = await supabase.from("mensajes").insert([{conversacion_id:conversationId, rol:"model", texto:respuestaIA, tipo_mensaje:"text"}]);
+        if (modelMsgErr) console.error("Error guardando msg model:", modelMsgErr.message);
+
         res.status(200).json({ respuesta: respuestaIA, isNewConversation, conversationId });
     } catch (error) { next(error); }
 });
@@ -378,7 +393,7 @@ app.post("/api/generateImage", autenticarToken, async (req, res, next) => {
     const conversationId = parseInt(inputConvId); if (isNaN(conversationId)) return res.status(400).json({ error: "ID de conversación inválido." });
     try {
         const { data:cO, error:oE } = await supabase.from("conversaciones").select("id").eq("id",conversationId).eq("usuario_id",req.usuario.id).maybeSingle(); if(oE) throw oE; if(!cO) return res.status(404).json({error:"Conversación no encontrada/autorizada."});
-        const resultadoImagen = await generarImagenClipdrop(prompt.trim()); // Ya sube a Supabase y devuelve URL pública
+        const resultadoImagen = await generarImagenClipdrop(prompt.trim());
         const { data:msgG, error:msgIE } = await supabase.from("mensajes").insert([{conversacion_id:conversationId, rol:"model", texto:resultadoImagen.url, tipo_mensaje:"image"}]).select("id").single();
         if(msgIE) { console.error("[GenerateImage] Error DB:",msgIE.message); return res.status(207).json({message:"Imagen generada pero error guardándola en conv.", fileName:resultadoImagen.fileName, imageUrl:resultadoImagen.url, errorDB:msgIE.message});}
         res.json({ message: "Imagen generada y guardada.", fileName:resultadoImagen.fileName, imageUrl:resultadoImagen.url, conversationId, messageId:msgG?.id });
@@ -394,43 +409,18 @@ app.use((err, req, res, next) => {
   const errL = req?.body?.idioma==='en'?"en":"es";
 
   if(err instanceof multer.MulterError){
-    if(err.code==="LIMIT_FILE_SIZE"){
-        scode=413; // Payload Too Large
-        msgU=errL==='en'?`File large (Max: ${TAMANO_MAX_ARCHIVO_MB}MB).`:`Archivo grande (Máx: ${TAMANO_MAX_ARCHIVO_MB}MB).`;
-    } else if(err.code==="LIMIT_UNEXPECTED_FILE" && err.message==='Solo se permiten archivos PDF.'){
-        scode=415; // Unsupported Media Type
-        msgU=err.message;
-    } else {
-        scode=400; // Bad Request for other multer errors
-        msgU=errL==='en'?`Upload error: ${err.message}.`:`Error subida: ${err.message}.`;
-    }
-  } else if(err instanceof SyntaxError && "body" in err){
-    scode=err.status||400;
-    msgU=errL==='en'?"Malformed JSON.":"JSON mal formado.";
-  } else if (err.message.includes("no disponible")||err.message.includes("no configurado")) {
-    scode=503;
-  } else if (err.message.includes("inválid")||err.message.includes("requerido")) {
-    scode=400;
-  } else if (err.message.includes("autenticación")||err.message.includes("permisos")||err.message.includes("API Key inválida")) {
-    scode=401;
-  } else if (err.message.includes("Límite")||err.message.includes("pago")||err.message.includes("créditos")){
-    scode=402;
-    msgU="Límite de uso gratuito.";
-  } else if(err.message.includes("Demasiadas solicitudes")||err.message.includes("sobrecargado")||err.message.includes("Too Many Requests")){
-    scode=429;
-    msgU="Servicio externo ocupado.";
-  } else if(scode===500&&(err.message.toLowerCase().includes("fetch")||err.message.toLowerCase().includes("network")||err.message.toLowerCase().includes("socket"))){
-    msgU="Error de red externa.";
-  } else if(err.message.includes("404")||err.message.includes("no encontrado")){
-    scode=404;
-    msgU="Recurso no encontrado.";
-  } else if(err.code && typeof err.code ==='string'&&(err.code.startsWith('2')||err.code.startsWith('PGR'))){ // Supabase/Postgres errors
-    console.warn("Error DB (Supabase/Postgres):", err.code, err.detail||err.hint);
-    msgU=err.message.includes("constraint")?"Conflicto de datos.":"Error en BD.";
-    if(err.code==='23505')scode=409; // Unique violation
-    else scode=500; // Other DB errors as 500
-  }
-
+    if(err.code==="LIMIT_FILE_SIZE"){ scode=413; msgU=errL==='en'?`File large (Max: ${TAMANO_MAX_ARCHIVO_MB}MB).`:`Archivo grande (Máx: ${TAMANO_MAX_ARCHIVO_MB}MB).`; }
+    else if(err.code==="LIMIT_UNEXPECTED_FILE"&&err.message==='Solo se permiten archivos PDF.'){ scode=415; msgU=err.message; }
+    else { scode=400; msgU=errL==='en'?`Upload error: ${err.message}.`:`Error subida: ${err.message}.`; }
+  } else if(err instanceof SyntaxError && "body" in err){ scode=err.status||400; msgU=errL==='en'?"Malformed JSON.":"JSON mal formado."; }
+  else if (err.message.includes("no disponible")||err.message.includes("no configurado")) scode=503;
+  else if (err.message.includes("inválid")||err.message.includes("requerido")) scode=400;
+  else if (err.message.includes("autenticación")||err.message.includes("permisos")||err.message.includes("API Key inválida")) scode=401;
+  else if (err.message.includes("Límite")||err.message.includes("pago")||err.message.includes("créditos")){ scode=402; msgU="Límite de uso gratuito."; }
+  else if(err.message.includes("Demasiadas solicitudes")||err.message.includes("sobrecargado")||err.message.includes("Too Many Requests")){ scode=429; msgU="Servicio externo ocupado."; }
+  else if(scode===500&&(err.message.toLowerCase().includes("fetch")||err.message.toLowerCase().includes("network")||err.message.toLowerCase().includes("socket"))) msgU="Error de red externa.";
+  else if(err.message.includes("404")||err.message.includes("no encontrado")){ scode=404; msgU="Recurso no encontrado."; }
+  else if(err.code && typeof err.code ==='string'&&(err.code.startsWith('2')||err.code.startsWith('PGR'))){ console.warn("Error DB (Supabase/Postgres):", err.code, err.detail||err.hint); msgU=err.message.includes("constraint")?"Conflicto de datos.":"Error en BD."; if(err.code==='23505')scode=409; else scode=500;}
   res.status(scode).json({ error: msgU });
 });
 
