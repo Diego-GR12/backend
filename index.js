@@ -1,3 +1,5 @@
+// --- START OF FILE index.js ---
+
 // --- Imports ---
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import express from "express";
@@ -30,7 +32,7 @@ const isDev = NODE_ENV !== "production";
 const COOKIE_OPTIONS = { httpOnly: true, secure: !isDev, sameSite: isDev ? "lax" : "none", maxAge: 3600 * 1000, path: "/" };
 const TAMANO_MAX_ARCHIVO_MB = 20;
 const MAX_LONGITUD_CONTEXTO = 30000;
-const MODELOS_PERMITIDOS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash", "gemini-2.5-pro-exp-03-25"];
+const MODELOS_PERMITIDOS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash", "gemini-2.5-pro-exp-03-25"]; // "gemini-2.5-pro-preview-03-25" es el nombre que tienes en el front, ajustado a como podría ser un ID de API
 const MODELO_POR_DEFECTO = "gemini-1.5-flash";
 const TEMP_POR_DEFECTO = 0.7;
 const TOPP_POR_DEFECTO = 0.9;
@@ -38,8 +40,7 @@ const IDIOMA_POR_DEFECTO = "es";
 const JWT_OPTIONS = { expiresIn: "1h" };
 
 const SUPABASE_PDF_BUCKET = "user-pdfs";
-// RECUERDA REEMPLAZAR "generated-images" SI EL SLUG DE TU BUCKET ES DIFERENTE
-const SUPABASE_IMAGES_BUCKET = "generated-images"; // <-- ¡¡AJUSTA ESTO!!
+const SUPABASE_IMAGES_BUCKET = "generated-images"; 
 
 // --- Verificaciones de Startup ---
 console.log("[Startup] JWT_SECRET cargado:", JWT_SECRET ? `${JWT_SECRET.substring(0, 3)}... (long: ${JWT_SECRET.length})` : "NO CARGADO!");
@@ -60,7 +61,6 @@ try {
 
 let supabase;
 try {
-  // LOGS DE DEPURACIÓN INMEDIATOS PARA VARIABLES DE SUPABASE
   console.log("[Env Vars Check Before Supabase Init] SUPABASE_URL:", SUPABASE_URL ? `Cargada (longitud: ${SUPABASE_URL.length})` : "NO CARGADA O VACÍA");
   console.log("[Env Vars Check Before Supabase Init] SUPABASE_KEY:", SUPABASE_KEY ? `Cargada (primeros 3 chars: ${SUPABASE_KEY.substring(0,3)}..., longitud: ${SUPABASE_KEY.length})` : "NO CARGADA O VACÍA");
 
@@ -140,30 +140,94 @@ async function generarRespuestaIA( prompt, historialDB, textoPDF, modeloReq, tem
   if (!clienteIA) throw new Error("Servicio IA (Google) no disponible.");
   const nombreModelo = MODELOS_PERMITIDOS.includes(modeloReq) ? modeloReq : MODELO_POR_DEFECTO;
   if (modeloReq && nombreModelo !== modeloReq) console.warn(`[Gen IA] Modelo no válido ('${modeloReq}'), usando: ${MODELO_POR_DEFECTO}`);
-  const configGeneracion = { temperature: !isNaN(temp) ? Math.max(0, Math.min(1, temp)) : TEMP_POR_DEFECTO, topP: !isNaN(topP) ? Math.max(0, Math.min(1, topP)) : TOPP_POR_DEFECTO, };
+  
+  const configGeneracion = { 
+    temperature: !isNaN(temp) ? Math.max(0, Math.min(1, temp)) : TEMP_POR_DEFECTO, 
+    topP: !isNaN(topP) ? Math.max(0, Math.min(1, topP)) : TOPP_POR_DEFECTO, 
+  };
+  
   const idioma = ["es", "en"].includes(lang) ? lang : IDIOMA_POR_DEFECTO;
-  const langStrings = idioma === "en" ? { systemBase: "You are a helpful conversational assistant. Answer clearly and concisely in Markdown format.", systemPdf: `You are an assistant that answers *based solely* on the provided text. If the answer isn't in the text, state that clearly. Use Markdown format.\n\nReference Text (Context):\n"""\n{CONTEXT}\n"""\n\n`, label: "Question", error: "I'm sorry, there was a problem contacting the AI" } : { systemBase: "Eres un asistente conversacional útil. Responde de forma clara y concisa en formato Markdown.", systemPdf: `Eres un asistente que responde *basándose únicamente* en el texto proporcionado. Si la respuesta no está en el texto, indícalo claramente. Usa formato Markdown.\n\nTexto de Referencia (Contexto):\n"""\n{CONTEXT}\n"""\n\n`, label: "Pregunta", error: "Lo siento, hubo un problema al contactar la IA" };
-  let instruccionSistema = textoPDF ? langStrings.systemPdf.replace("{CONTEXT}", (textoPDF.length > MAX_LONGITUD_CONTEXTO ? textoPDF.substring(0, MAX_LONGITUD_CONTEXTO) + "... (context truncated)" : textoPDF)) : langStrings.systemBase;
+
+  // --- INICIO DE MODIFICACIÓN: Obtener fecha y hora actual ---
+  const ahora = new Date();
+  const opcionesFecha = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+  const opcionesHora = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: idioma === 'en' }; // hour12 para inglés
+
+  let fechaActualFormateada, horaActualFormateada;
+  if (idioma === "en") {
+      fechaActualFormateada = ahora.toLocaleDateString('en-US', opcionesFecha);
+      horaActualFormateada = ahora.toLocaleTimeString('en-US', opcionesHora);
+  } else { // 'es' por defecto
+      fechaActualFormateada = ahora.toLocaleDateString('es-ES', opcionesFecha);
+      horaActualFormateada = ahora.toLocaleTimeString('es-ES', opcionesHora);
+  }
+
+  const infoFechaHora = idioma === "en"
+      ? `Today is ${fechaActualFormateada}. The current time is ${horaActualFormateada}.`
+      : `Hoy es ${fechaActualFormateada}. La hora actual es ${horaActualFormateada}.`;
+  // --- FIN DE MODIFICACIÓN ---
+
+  const langStrings = idioma === "en" 
+    ? { 
+        systemBase: `You are a helpful conversational assistant. ${infoFechaHora} Answer clearly and concisely in Markdown format.`, 
+        systemPdf: `You are an assistant that answers *based solely* on the provided text. ${infoFechaHora} If the answer isn't in the text, state that clearly. Use Markdown format.\n\nReference Text (Context):\n"""\n{CONTEXT}\n"""\n\n`, 
+        label: "Question", 
+        error: "I'm sorry, there was a problem contacting the AI" 
+      } 
+    : { 
+        systemBase: `Eres un asistente conversacional útil. ${infoFechaHora} Responde de forma clara y concisa en formato Markdown.`, 
+        systemPdf: `Eres un asistente que responde *basándose únicamente* en el texto proporcionado. ${infoFechaHora} Si la respuesta no está en el texto, indícalo claramente. Usa formato Markdown.\n\nTexto de Referencia (Contexto):\n"""\n{CONTEXT}\n"""\n\n`, 
+        label: "Pregunta", 
+        error: "Lo siento, hubo un problema al contactar la IA" 
+      };
+  
+  let instruccionSistema = textoPDF 
+    ? langStrings.systemPdf.replace("{CONTEXT}", (textoPDF.length > MAX_LONGITUD_CONTEXTO ? textoPDF.substring(0, MAX_LONGITUD_CONTEXTO) + "... (context truncated)" : textoPDF)) 
+    : langStrings.systemBase;
+  
   if (textoPDF && textoPDF.length > MAX_LONGITUD_CONTEXTO) console.warn(`[Gen IA] ✂️ Contexto PDF truncado.`);
+  
   const promptCompletoUsuario = `${instruccionSistema}${langStrings.label}: ${prompt}`;
-  const contenidoGemini = [ ...(historialDB || []).filter((m) => m.texto?.trim()).map((m) => ({ role: m.rol === "user" ? "user" : "model", parts: [{ text: m.texto }], })), { role: "user", parts: [{ text: promptCompletoUsuario }] }, ];
-  console.log( `[Gen IA] ➡️ Enviando ${contenidoGemini.length} partes a Gemini (${nombreModelo}).` );
+  
+  const contenidoGemini = [ 
+    ...(historialDB || []).filter((m) => m.texto?.trim()).map((m) => ({ 
+        role: m.rol === "user" ? "user" : "model", 
+        parts: [{ text: m.texto }], 
+    })), 
+    { role: "user", parts: [{ text: promptCompletoUsuario }] }, 
+  ];
+  
+  console.log( `[Gen IA] ➡️ Enviando ${contenidoGemini.length} partes a Gemini (${nombreModelo}). Contexto fecha/hora: "${infoFechaHora}"` );
+  
   try {
     const modeloGemini = clienteIA.getGenerativeModel({ model: nombreModelo });
-    const resultado = await modeloGemini.generateContent({ contents: contenidoGemini, generationConfig: configGeneracion, });
+    const resultado = await modeloGemini.generateContent({ 
+        contents: contenidoGemini, 
+        generationConfig: configGeneracion, 
+    });
     const response = resultado?.response;
     const textoRespuestaIA = response?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (textoRespuestaIA) { console.log("[Gen IA] ✅ Respuesta recibida."); return textoRespuestaIA.trim(); }
-    const blockReason = response?.promptFeedback?.blockReason; const finishReason = response?.candidates?.[0]?.finishReason;
+    
+    if (textoRespuestaIA) { 
+        console.log("[Gen IA] ✅ Respuesta recibida."); 
+        return textoRespuestaIA.trim(); 
+    }
+    
+    const blockReason = response?.promptFeedback?.blockReason; 
+    const finishReason = response?.candidates?.[0]?.finishReason;
     const errorDetail = blockReason ? `Bloqueo: ${blockReason}` : finishReason ? `Finalización: ${finishReason}` : "Respuesta inválida";
-    console.warn(`[Gen IA] ⚠️ Respuesta vacía/bloqueada. ${errorDetail}`); throw new Error(`${langStrings.error}. (${errorDetail})`);
-  } catch (error) { console.error(`[Gen IA] ❌ Error API (${nombreModelo}):`, error.message); throw new Error(`${langStrings.error}. (Detalle: ${error.message || "Desconocido"})`); }
+    console.warn(`[Gen IA] ⚠️ Respuesta vacía/bloqueada. ${errorDetail}`); 
+    throw new Error(`${langStrings.error}. (${errorDetail})`);
+  } catch (error) { 
+    console.error(`[Gen IA] ❌ Error API (${nombreModelo}):`, error.message); 
+    throw new Error(`${langStrings.error}. (Detalle: ${error.message || "Desconocido"})`); 
+  }
 }
 
 async function generarImagenClipdrop(promptTexto) {
     if (!CLIPDROP_API_KEY) throw new Error("Servicio de imágenes (Clipdrop) no disponible (sin API key).");
     if (!promptTexto?.trim()) throw new Error("Prompt inválido para Clipdrop.");
-    if (!supabase) throw new Error("Supabase no disponible para guardar imagen."); // Chequeo importante
+    if (!supabase) throw new Error("Supabase no disponible para guardar imagen.");
     const CLIPDROP_API_URL = "https://clipdrop-api.co/text-to-image/v1";
     console.log(`[Img Gen Clipdrop Axios] Solicitando para: "${promptTexto}"`);
     const form = new FormData();
@@ -172,9 +236,9 @@ async function generarImagenClipdrop(promptTexto) {
         const response = await axios.post(CLIPDROP_API_URL, form, { headers: { 'x-api-key': CLIPDROP_API_KEY, ...form.getHeaders() }, responseType: 'arraybuffer' });
         const bufferImagen = Buffer.from(response.data);
         const tipoMime = response.headers['content-type'] || 'image/png';
-        const extension = tipoMime.includes('png') ? 'png' : (tipoMime.includes('jpeg') ? 'jpeg' : 'out');
+        const extension = tipoMime.includes('png') ? 'png' : (tipoMime.includes('jpeg') ? 'jpeg' : 'jpg'); // Usar jpg para jpeg
         const nombreArchivoImagenOriginal = `${Date.now()}-clipdrop-${promptTexto.substring(0,15).replace(/[^a-z0-9]/gi, '_')}.${extension}`;
-        const supabaseImagePath = nombreArchivoImagenOriginal; // Ruta dentro del bucket (sin subcarpetas aquí)
+        const supabaseImagePath = nombreArchivoImagenOriginal;
 
         console.log(`[Supabase Storage Img Upload Debug] Intentando subir '${nombreArchivoImagenOriginal}' como '${supabaseImagePath}' al bucket '${SUPABASE_IMAGES_BUCKET}'`);
         const { error: uploadError } = await supabase.storage
@@ -188,7 +252,6 @@ async function generarImagenClipdrop(promptTexto) {
         const { data: publicUrlData } = supabase.storage.from(SUPABASE_IMAGES_BUCKET).getPublicUrl(supabaseImagePath);
         if (!publicUrlData || !publicUrlData.publicUrl) {
             console.error(`[Supabase Storage] Error obteniendo URL pública para ${supabaseImagePath}. Datos devueltos:`, publicUrlData);
-            // Si no podemos obtener la URL, el archivo subido es inútil y podría causar problemas. Intentar borrarlo.
             await supabase.storage.from(SUPABASE_IMAGES_BUCKET).remove([supabaseImagePath]).catch(remErr => console.error(`Error al intentar borrar imagen ${supabaseImagePath} tras fallo de getPublicUrl:`, remErr));
             throw new Error("Error al obtener la URL de la imagen generada (publicUrlData es nulo o no tiene publicUrl).");
         }
@@ -256,9 +319,7 @@ app.post("/api/files", autenticarToken, uploadArchivosPdf, async (req, res, next
       const resultadosSubidaDB = [];
       const errStor = [];
       for (const f of archivosRecibidos) {
-          console.log("[Storage Upload Debug /api/files] usuarioId:", usuarioId); // LOG AÑADIDO
           const nombreSupa = `${usuarioId}/${Date.now()}-${f.originalname.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9.\-_]/gi, '_')}`;
-          console.log(`[Storage Upload Debug /api/files] Intentando subir '${f.originalname}' como '${nombreSupa}' al bucket '${SUPABASE_PDF_BUCKET}'`);
           if (!f.buffer) {
               console.error(`[Storage Upload Debug /api/files] Error: f.buffer no existe para el archivo ${f.originalname}.`);
               errStor.push({ originalName: f.originalname, generatedName: nombreSupa, errorDetails: { message: "f.buffer is missing" } });
@@ -269,7 +330,6 @@ app.post("/api/files", autenticarToken, uploadArchivosPdf, async (req, res, next
               console.error(`[Storage Upload Fail /api/files] Error detallado al subir '${nombreSupa}' (Original: ${f.originalname}):`, JSON.stringify(uE, null, 2));
               errStor.push({ originalName: f.originalname, generatedName: nombreSupa, errorDetails: uE });
           } else {
-              console.log(`[Storage Upload Success /api/files] Subido '${nombreSupa}' exitosamente.`);
               resultadosSubidaDB.push({ usuario_id: usuarioId, nombre_archivo_unico: nombreSupa, nombre_archivo_original: f.originalname });
           }
       }
@@ -303,7 +363,7 @@ app.get("/api/files", autenticarToken, async (req, res, next) => {
     } catch (error) { next(error); }
 });
 
-app.delete( "/api/files/:rutaSupabaseArchivo(.*)", autenticarToken, async (req, res, next) => { // (.*) para capturar rutas con /
+app.delete( "/api/files/:rutaSupabaseArchivo(.*)", autenticarToken, async (req, res, next) => { 
     if (!supabase) return res.status(503).json({error: "BD no disponible"});
     const idUsuario = req.usuario.id; const rutaSupabaseArchivo = req.params.rutaSupabaseArchivo;
     if(!rutaSupabaseArchivo) return res.status(400).json({error: "Ruta de archivo Supabase no especificada."});
@@ -311,8 +371,7 @@ app.delete( "/api/files/:rutaSupabaseArchivo(.*)", autenticarToken, async (req, 
       const { data: archivoMeta, error: metaError } = await supabase.from("archivos_usuario").select("id").eq("usuario_id", idUsuario).eq("nombre_archivo_unico", rutaSupabaseArchivo).single();
       if (metaError || !archivoMeta) { if (metaError && metaError.code !== 'PGRST116') { console.error("[Delete File Meta Error]", metaError); throw metaError; } return res.status(404).json({ error: "Archivo no encontrado o no pertenece al usuario." });}
       const { error: storageDeleteError } = await supabase.storage.from(SUPABASE_PDF_BUCKET).remove([rutaSupabaseArchivo]);
-      // Incluso si storageDeleteError existe (ej: archivo ya no estaba en storage), intentamos borrar de DB
-      if (storageDeleteError) { console.warn("[Supabase Storage Delete Warning/Error]", storageDeleteError.message); /* No necesariamente lanzar error aquí */ }
+      if (storageDeleteError) { console.warn("[Supabase Storage Delete Warning/Error]", storageDeleteError.message); }
       const { error: dbDeleteError } = await supabase.from("archivos_usuario").delete().eq("id", archivoMeta.id);
       if (dbDeleteError) { console.error("[DB Delete PDF Meta Error]", dbDeleteError.message); throw new Error(`Error eliminando metadato PDF de DB: ${dbDeleteError.message}.`); }
       res.json({ message: "Archivo PDF eliminado." });
@@ -380,8 +439,6 @@ app.post("/api/generateText", autenticarToken, subirEnGenerateText, async (req, 
     if (!clienteIA) { console.error("Error: Cliente GoogleGenerativeAI no inicializado en /api/generateText"); return res.status(503).json({ error: "Servicio de IA no disponible." }); }
 
     const usuarioId = req.usuario.id;
-    console.log("[Storage Upload Debug /api/generateText] Iniciando. UsuarioId:", usuarioId); // LOG AÑADIDO
-
     const { prompt, conversationId: inputConvId, modeloSeleccionado, temperatura, topP, idioma, archivosSeleccionados } = req.body;
     const archivosPdfNuevosSubidos = req.files || [];
     let archivosSelParseados = [];
@@ -408,13 +465,11 @@ app.post("/api/generateText", autenticarToken, subirEnGenerateText, async (req, 
         }
         if (archivosPdfNuevosSubidos.length > 0) {
             for (const f of archivosPdfNuevosSubidos) {
-                console.log("[Storage Upload Debug /api/generateText] Dentro del bucle de archivos. Archivo actual:", f.originalname); // LOG AÑADIDO
                 const nombreSupa = `${usuarioId}/${Date.now()}-${f.originalname.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9.\-_]/gi, '_')}`;
-                console.log(`[Storage Upload Debug /api/generateText] Intentando subir '${f.originalname}' como '${nombreSupa}' al bucket '${SUPABASE_PDF_BUCKET}'`);
                 if (!f.buffer) { console.error(`[Storage Upload Debug /api/generateText] Error: f.buffer no existe para ${f.originalname}.`); errStor.push({ originalName: f.originalname, generatedName: nombreSupa, errorDetails: { message: "f.buffer is missing" }}); continue; }
                 const {error:uE} = await supabase.storage.from(SUPABASE_PDF_BUCKET).upload(nombreSupa, f.buffer, {contentType:f.mimetype});
                 if(uE){ console.error(`[Storage Upload Fail /api/generateText] Error detallado al subir '${nombreSupa}' (Original: ${f.originalname}):`, JSON.stringify(uE, null, 2)); errStor.push({ originalName: f.originalname, generatedName: nombreSupa, errorDetails: uE });
-                } else { console.log(`[Storage Upload Success /api/generateText] Subido '${nombreSupa}'.`); rutasSupabaseNuevosArchivos.push(nombreSupa); regDB.push({usuario_id:usuarioId, nombre_archivo_unico:nombreSupa, nombre_archivo_original:f.originalname});}
+                } else { rutasSupabaseNuevosArchivos.push(nombreSupa); regDB.push({usuario_id:usuarioId, nombre_archivo_unico:nombreSupa, nombre_archivo_original:f.originalname});}
             }
             if(regDB.length>0){
                 const{error:iE}=await supabase.from("archivos_usuario").insert(regDB);
@@ -426,7 +481,7 @@ app.post("/api/generateText", autenticarToken, subirEnGenerateText, async (req, 
         const contextoPDF = await generarContextoPDF(usuarioId, todasRutasSupaCtx);
         if ((!prompt?.trim()) && (!contextoPDF || contextoPDF.startsWith("[Error"))) return res.status(400).json({error:"Prompt o PDF válidos requeridos."});
         const {data:hist, error:errH} = await supabase.from("mensajes").select("rol, texto").eq("conversacion_id",conversationId).eq("es_error",false).order("fecha_envio",{ascending:true}); if(errH) throw new Error("Error cargando historial: "+errH.message);
-        const promptIA = prompt || (idioma==='es' ? "Resume archivos.":"Summarize files.");
+        const promptIA = prompt || (idioma==='es' ? "Resume los archivos adjuntos.":"Summarize the attached files.");
         const respuestaIA = await generarRespuestaIA(promptIA, (hist||[]), contextoPDF, modeloSeleccionado, parseFloat(temperatura), parseFloat(topP), idioma);
         const { error: modelMsgErr } = await supabase.from("mensajes").insert([{conversacion_id:conversationId, rol:"model", texto:respuestaIA, tipo_mensaje:"text"}]);
         if (modelMsgErr) console.error("Error guardando msg model:", modelMsgErr.message);
