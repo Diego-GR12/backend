@@ -1,4 +1,6 @@
+// --- START OF FILE index.js ---
 
+// --- Imports ---
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import express from "express";
 import cors from "cors";
@@ -30,8 +32,7 @@ const isDev = NODE_ENV !== "production";
 const COOKIE_OPTIONS = { httpOnly: true, secure: !isDev, sameSite: isDev ? "lax" : "none", maxAge: 3600 * 1000, path: "/" };
 const TAMANO_MAX_ARCHIVO_MB = 20;
 const MAX_LONGITUD_CONTEXTO = 30000;
-// Asegúrate que esta clave coincida con la usada en el frontend para "Gemini 2.5 Pro (Preview)"
-const MODELOS_PERMITIDOS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash", "gemini-2.5-pro-preview-03-25"]; 
+const MODELOS_PERMITIDOS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash", "gemini-2.5-pro-exp-03-25"]; // "gemini-2.5-pro-preview-03-25" es el nombre que tienes en el front, ajustado a como podría ser un ID de API
 const MODELO_POR_DEFECTO = "gemini-1.5-flash";
 const TEMP_POR_DEFECTO = 0.7;
 const TOPP_POR_DEFECTO = 0.9;
@@ -137,46 +138,45 @@ async function generarContextoPDF(idUsuario, rutasSupabaseArchivos) {
 
 async function generarRespuestaIA( prompt, historialDB, textoPDF, modeloReq, temp, topP, lang) {
   if (!clienteIA) throw new Error("Servicio IA (Google) no disponible.");
-  
   const nombreModelo = MODELOS_PERMITIDOS.includes(modeloReq) ? modeloReq : MODELO_POR_DEFECTO;
-  if (modeloReq && nombreModelo !== modeloReq) {
-    console.warn(`[Gen IA] Modelo '${modeloReq}' no está en la lista de permitidos o es inválido, usando por defecto: ${MODELO_POR_DEFECTO}. Modelos permitidos: ${MODELOS_PERMITIDOS.join(', ')}`);
-  }
+  if (modeloReq && nombreModelo !== modeloReq) console.warn(`[Gen IA] Modelo no válido ('${modeloReq}'), usando: ${MODELO_POR_DEFECTO}`);
   
   const configGeneracion = { 
     temperature: !isNaN(temp) ? Math.max(0, Math.min(1, temp)) : TEMP_POR_DEFECTO, 
     topP: !isNaN(topP) ? Math.max(0, Math.min(1, topP)) : TOPP_POR_DEFECTO, 
   };
   
+  const idioma = ["es", "en"].includes(lang) ? lang : IDIOMA_POR_DEFECTO;
+
+  // --- INICIO DE MODIFICACIÓN: Obtener fecha y hora actual ---
   const ahora = new Date();
   const opcionesFecha = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
-  
-  let localeParaFormato = lang === 'en' ? 'en-US' : 'es-ES';
-  // Para la hora, especificamos hourCycle para un control más explícito del formato 24h/12h
-  const opcionesHora = { 
-    hour: '2-digit', 
-    minute: '2-digit', 
-    second: '2-digit', 
-    ...(lang === 'en' ? { hour12: true } : { hourCycle: 'h23' }) // hour12 para en, hourCycle h23 para es (24h)
-  };
+  const opcionesHora = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: idioma === 'en' }; // hour12 para inglés
 
-  const fechaActualFormateada = ahora.toLocaleDateString(localeParaFormato, opcionesFecha);
-  const horaActualFormateada = ahora.toLocaleTimeString(localeParaFormato, opcionesHora);
+  let fechaActualFormateada, horaActualFormateada;
+  if (idioma === "en") {
+      fechaActualFormateada = ahora.toLocaleDateString('en-US', opcionesFecha);
+      horaActualFormateada = ahora.toLocaleTimeString('en-US', opcionesHora);
+  } else { // 'es' por defecto
+      fechaActualFormateada = ahora.toLocaleDateString('es-ES', opcionesFecha);
+      horaActualFormateada = ahora.toLocaleTimeString('es-ES', opcionesHora);
+  }
 
-  const infoFechaHoraContexto = lang === "en"
-      ? `The current date and time at the server is ${fechaActualFormateada}, ${horaActualFormateada}. When asked for the current date or time, YOU MUST PROVIDE THIS SERVER TIME. You can also mention that this might differ from the user's local time.`
-      : `La fecha y hora actual en el servidor es ${fechaActualFormateada}, ${horaActualFormateada}. Cuando se te pregunte por la fecha o hora actual, DEBES PROPORCIONAR ESTA HORA DEL SERVIDOR. Puedes mencionar también que podría diferir de la hora local del usuario.`;
-  
-  const langStrings = lang === "en" 
+  const infoFechaHora = idioma === "en"
+      ? `Today is ${fechaActualFormateada}. The current time is ${horaActualFormateada}.`
+      : `Hoy es ${fechaActualFormateada}. La hora actual es ${horaActualFormateada}.`;
+  // --- FIN DE MODIFICACIÓN ---
+
+  const langStrings = idioma === "en" 
     ? { 
-        systemBase: `You are a helpful conversational assistant. ${infoFechaHoraContexto} Answer clearly and concisely in Markdown format.`, 
-        systemPdf: `You are an assistant that answers *based solely* on the provided text. ${infoFechaHoraContexto} If the answer isn't in the text, state that clearly. Use Markdown format.\n\nReference Text (Context):\n"""\n{CONTEXT}\n"""\n\n`, 
+        systemBase: `You are a helpful conversational assistant. ${infoFechaHora} Answer clearly and concisely in Markdown format.`, 
+        systemPdf: `You are an assistant that answers *based solely* on the provided text. ${infoFechaHora} If the answer isn't in the text, state that clearly. Use Markdown format.\n\nReference Text (Context):\n"""\n{CONTEXT}\n"""\n\n`, 
         label: "Question", 
         error: "I'm sorry, there was a problem contacting the AI" 
       } 
     : { 
-        systemBase: `Eres un asistente conversacional útil. ${infoFechaHoraContexto} Responde de forma clara y concisa en formato Markdown.`, 
-        systemPdf: `Eres un asistente que responde *basándose únicamente* en el texto proporcionado. ${infoFechaHoraContexto} Si la respuesta no está en el texto, indícalo claramente. Usa formato Markdown.\n\nTexto de Referencia (Contexto):\n"""\n{CONTEXT}\n"""\n\n`, 
+        systemBase: `Eres un asistente conversacional útil. ${infoFechaHora} Responde de forma clara y concisa en formato Markdown.`, 
+        systemPdf: `Eres un asistente que responde *basándose únicamente* en el texto proporcionado. ${infoFechaHora} Si la respuesta no está en el texto, indícalo claramente. Usa formato Markdown.\n\nTexto de Referencia (Contexto):\n"""\n{CONTEXT}\n"""\n\n`, 
         label: "Pregunta", 
         error: "Lo siento, hubo un problema al contactar la IA" 
       };
@@ -197,7 +197,7 @@ async function generarRespuestaIA( prompt, historialDB, textoPDF, modeloReq, tem
     { role: "user", parts: [{ text: promptCompletoUsuario }] }, 
   ];
   
-  console.log( `[Gen IA] ➡️ Enviando ${contenidoGemini.length} partes a Gemini (${nombreModelo}). Contexto fecha/hora para IA: "${infoFechaHoraContexto}"` );
+  console.log( `[Gen IA] ➡️ Enviando ${contenidoGemini.length} partes a Gemini (${nombreModelo}). Contexto fecha/hora: "${infoFechaHora}"` );
   
   try {
     const modeloGemini = clienteIA.getGenerativeModel({ model: nombreModelo });
@@ -236,7 +236,7 @@ async function generarImagenClipdrop(promptTexto) {
         const response = await axios.post(CLIPDROP_API_URL, form, { headers: { 'x-api-key': CLIPDROP_API_KEY, ...form.getHeaders() }, responseType: 'arraybuffer' });
         const bufferImagen = Buffer.from(response.data);
         const tipoMime = response.headers['content-type'] || 'image/png';
-        const extension = tipoMime.includes('png') ? 'png' : (tipoMime.includes('jpeg') || tipoMime.includes('jpg') ? 'jpg' : 'out');
+        const extension = tipoMime.includes('png') ? 'png' : (tipoMime.includes('jpeg') ? 'jpeg' : 'jpg'); // Usar jpg para jpeg
         const nombreArchivoImagenOriginal = `${Date.now()}-clipdrop-${promptTexto.substring(0,15).replace(/[^a-z0-9]/gi, '_')}.${extension}`;
         const supabaseImagePath = nombreArchivoImagenOriginal;
 
@@ -481,12 +481,8 @@ app.post("/api/generateText", autenticarToken, subirEnGenerateText, async (req, 
         const contextoPDF = await generarContextoPDF(usuarioId, todasRutasSupaCtx);
         if ((!prompt?.trim()) && (!contextoPDF || contextoPDF.startsWith("[Error"))) return res.status(400).json({error:"Prompt o PDF válidos requeridos."});
         const {data:hist, error:errH} = await supabase.from("mensajes").select("rol, texto").eq("conversacion_id",conversationId).eq("es_error",false).order("fecha_envio",{ascending:true}); if(errH) throw new Error("Error cargando historial: "+errH.message);
-        
-        // Pasar el 'idioma' de req.body (que es 'lang' en generarRespuestaIA)
-        const idiomaActual = idioma || IDIOMA_POR_DEFECTO;
-        const promptIA = prompt || (idiomaActual ==='es' ? "Resume los archivos adjuntos.":"Summarize the attached files.");
-        
-        const respuestaIA = await generarRespuestaIA(promptIA, (hist||[]), contextoPDF, modeloSeleccionado, parseFloat(temperatura), parseFloat(topP), idiomaActual);
+        const promptIA = prompt || (idioma==='es' ? "Resume los archivos adjuntos.":"Summarize the attached files.");
+        const respuestaIA = await generarRespuestaIA(promptIA, (hist||[]), contextoPDF, modeloSeleccionado, parseFloat(temperatura), parseFloat(topP), idioma);
         const { error: modelMsgErr } = await supabase.from("mensajes").insert([{conversacion_id:conversationId, rol:"model", texto:respuestaIA, tipo_mensaje:"text"}]);
         if (modelMsgErr) console.error("Error guardando msg model:", modelMsgErr.message);
         if (errStor.length > 0) { return res.status(207).json({ respuesta: respuestaIA, isNewConversation, conversationId, uploadErrors: errStor.map(e=>({originalName: e.originalName, error: e.errorDetails?.message || "Error desconocido en la subida"})) }); }
@@ -543,4 +539,5 @@ app.listen(PORT, () => {
     console.log(` Google GenAI: ${clienteIA ? '✅ OK' : '❌ NO OK (Verificar API_KEY)'}`);
     console.log(` Clipdrop Imagen: ${CLIPDROP_API_KEY ? '✅ OK' : '❌ NO OK (Verificar CLIPDROP_API_KEY)'}`);
     console.log(`----------------------\n`);
-}); 
+});
+// --- END OF FILE index.js ---
