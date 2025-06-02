@@ -37,9 +37,9 @@ const TAMANO_MAX_ARCHIVO_MB = 20;
 const MAX_LONGITUD_CONTEXTO = 30000;
 const MODELOS_PERMITIDOS = [
   "gemini-1.5-flash",
-  "gemini-2.0-pro",
+  "gemini-1.5-pro",
   "gemini-2.0-flash",
-  
+
 ];
 const MODELO_POR_DEFECTO = "gemini-1.5-flash";
 const TEMP_POR_DEFECTO = 0.7;
