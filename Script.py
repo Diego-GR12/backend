@@ -10,170 +10,169 @@ import socket
 from datetime import datetime
 
 # --- Constantes ---
-SHORT_RETRIES = 3
-SHORT_DELAY = 60
-LONG_DELAY = 300
-TIMEOUTS = {
-    'default': 30,
+REINTENTOS_CORTOS = 3
+ESPERA_CORTA = 60
+ESPERA_LARGA = 300
+TIEMPOS_ESPERA = {
+    'por_defecto': 30,
     'ls_remote': 45,
     'push': 120,
 }
 
 # --- Funciones Git ---
 
-def run_git_command(cmd, update_status, silent=False, return_stdout=False, timeout=None):
-    timeout = timeout or TIMEOUTS['default']
-    update_status(f"Ejecutando: {' '.join(cmd)}")
+def ejecutar_comando_git(comando, actualizar_estado, silencioso=False, devolver_salida=False, tiempo_espera=None):
+    tiempo_espera = tiempo_espera or TIEMPOS_ESPERA['por_defecto']
+    actualizar_estado(f"Ejecutando: {' '.join(comando)}")
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=os.getcwd())
-        if result.returncode == 0:
-            if not silent:
-                if result.stdout.strip():
-                    update_status(result.stdout.strip(), is_detail=True)
-            return result.stdout.strip() if return_stdout else True
+        resultado = subprocess.run(comando, capture_output=True, text=True, timeout=tiempo_espera, cwd=os.getcwd())
+        if resultado.returncode == 0:
+            if not silencioso and resultado.stdout.strip():
+                actualizar_estado(resultado.stdout.strip(), es_detalle=True)
+            return resultado.stdout.strip() if devolver_salida else True
         else:
-            update_status(f"Error en comando: {' '.join(cmd)}")
-            if result.stderr.strip():
-                update_status(result.stderr.strip(), is_detail=True)
-            return None if return_stdout else False
+            actualizar_estado(f"Error en comando: {' '.join(comando)}")
+            if resultado.stderr.strip():
+                actualizar_estado(resultado.stderr.strip(), es_detalle=True)
+            return None if devolver_salida else False
     except FileNotFoundError:
-        update_status(f"Git no encontrado. Asegúrate de que esté instalado y en PATH.")
+        actualizar_estado("Git no encontrado. Asegúrate de que esté instalado y en PATH.")
     except subprocess.TimeoutExpired:
-        update_status(f"Timeout ({timeout}s) en comando: {' '.join(cmd)}")
+        actualizar_estado(f"Tiempo de espera excedido ({tiempo_espera}s) en comando: {' '.join(comando)}")
     except Exception as e:
-        update_status(f"Excepción ejecutando comando Git: {e}")
-    return None if return_stdout else False
+        actualizar_estado(f"Excepción ejecutando comando Git: {e}")
+    return None if devolver_salida else False
 
 # --- Verificaciones ---
 
-def check_in_git_repo(update_status):
+def esta_en_repositorio_git(actualizar_estado):
     if not os.path.isdir(".git"):
-        update_status("Este directorio no es un repositorio Git.")
+        actualizar_estado("Este directorio no es un repositorio Git.")
         messagebox.showerror("Error", "Ejecuta esto desde un repositorio Git.")
         return False
     return True
 
-def get_remote_url(update_status, remote="origin"):
-    return run_git_command(["git", "remote", "get-url", remote], update_status, silent=True, return_stdout=True)
+def obtener_url_remota(actualizar_estado, remoto="origin"):
+    return ejecutar_comando_git(["git", "remote", "get-url", remoto], actualizar_estado, silencioso=True, devolver_salida=True)
 
-def check_github_connectivity(update_status, url="https://github.com"):
+def verificar_conectividad_github(actualizar_estado, url="https://github.com"):
     try:
         urllib.request.urlopen(url, timeout=10)
-        update_status("Conectividad general a GitHub: OK")
+        actualizar_estado("Conectividad general a GitHub: OK")
         return True
     except Exception as e:
-        update_status(f"Conectividad general a GitHub fallida: {e}")
+        actualizar_estado(f"Conectividad general a GitHub fallida: {e}")
         return False
 
-def check_remote_access(update_status, remote="origin"):
-    url = get_remote_url(update_status, remote)
+def verificar_acceso_remoto(actualizar_estado, remoto="origin"):
+    url = obtener_url_remota(actualizar_estado, remoto)
     if not url:
         return False
-    update_status(f"Probando acceso a remoto: {url}")
-    return run_git_command(["git", "ls-remote", "--exit-code", "--heads", url], update_status, silent=True, timeout=TIMEOUTS['ls_remote'])
+    actualizar_estado(f"Probando acceso al remoto: {url}")
+    return ejecutar_comando_git(["git", "ls-remote", "--exit-code", "--heads", url], actualizar_estado, silencioso=True, tiempo_espera=TIEMPOS_ESPERA['ls_remote'])
 
 # --- Push con Reintentos ---
 
-def push_with_retries(update_status, remote="origin"):
-    retries = 0
+def hacer_push_con_reintentos(actualizar_estado, remoto="origin"):
+    intentos = 0
     while True:
-        update_status(f"Intentando git push (intento #{retries + 1})...")
-        if run_git_command(["git", "push", remote], update_status, timeout=TIMEOUTS['push']):
-            update_status("Push exitoso.")
+        actualizar_estado(f"Intentando git push (intento #{intentos + 1})...")
+        if ejecutar_comando_git(["git", "push", remoto], actualizar_estado, tiempo_espera=TIEMPOS_ESPERA['push']):
+            actualizar_estado("Push exitoso.")
             return True
-        retries += 1
-        delay = SHORT_DELAY if retries <= SHORT_RETRIES else LONG_DELAY
-        for i in range(delay, 0, -1):
-            update_status(f"Reintentando push en {i} segundos...", is_detail=True)
+        intentos += 1
+        espera = ESPERA_CORTA if intentos <= REINTENTOS_CORTOS else ESPERA_LARGA
+        for i in range(espera, 0, -1):
+            actualizar_estado(f"Reintentando push en {i} segundos...", es_detalle=True)
             time.sleep(1)
-        if retries > SHORT_RETRIES:
-            update_status("Reiniciando ciclo de intentos...")
+        if intentos > REINTENTOS_CORTOS:
+            actualizar_estado("Reiniciando ciclo de intentos...")
 
 # --- Proceso Principal ---
 
-def backup_process(update_status):
+def proceso_respaldo(actualizar_estado):
     try:
-        if not check_in_git_repo(update_status):
+        if not esta_en_repositorio_git(actualizar_estado):
             return False
 
         # git add
-        if not run_git_command(["git", "add", "."], update_status):
+        if not ejecutar_comando_git(["git", "add", "."], actualizar_estado):
             return False
 
         # git commit
-        status = run_git_command(["git", "status", "--porcelain"], update_status, return_stdout=True, silent=True)
-        if not status:
-            update_status("No hay cambios para commitear.")
+        estado = ejecutar_comando_git(["git", "status", "--porcelain"], actualizar_estado, devolver_salida=True, silencioso=True)
+        if not estado:
+            actualizar_estado("No hay cambios para respaldar.")
         else:
-            msg = f"Backup {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            if not run_git_command(["git", "commit", "-m", msg], update_status):
+            mensaje = f"Respaldo {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            if not ejecutar_comando_git(["git", "commit", "-m", mensaje], actualizar_estado):
                 return False
 
-        # check remoto
-        if not check_remote_access(update_status):
-            if not check_github_connectivity(update_status):
-                update_status("Problema general de red.")
+        # verificación de remoto
+        if not verificar_acceso_remoto(actualizar_estado):
+            if not verificar_conectividad_github(actualizar_estado):
+                actualizar_estado("Problema general de red.")
             else:
-                update_status("Problema con el acceso al remoto. Verifica permisos.")
+                actualizar_estado("Problema con el acceso al remoto. Verifica permisos.")
         
         # push
-        return push_with_retries(update_status)
+        return hacer_push_con_reintentos(actualizar_estado)
 
     except Exception as e:
-        update_status(f"Error inesperado: {e}")
+        actualizar_estado(f"Error inesperado: {e}")
         return False
 
-# --- GUI ---
+# --- Interfaz Gráfica ---
 
-class BackupApp:
-    def __init__(self, root):
-        self.root = root
-        root.title("Backup GitHub")
-        root.geometry("600x500")
+class AplicacionRespaldo:
+    def __init__(self, raiz):
+        self.raiz = raiz
+        raiz.title("Respaldo a GitHub")
+        raiz.geometry("600x500")
 
-        self.status_var = tk.StringVar()
-        self.detail_var = tk.StringVar()
+        self.estado_var = tk.StringVar()
+        self.detalle_var = tk.StringVar()
 
-        tk.Button(root, text="Iniciar Backup", command=self.iniciar_hilo, width=20, height=2).pack(pady=10)
-        tk.Label(root, textvariable=self.status_var, fg='blue').pack()
-        tk.Label(root, textvariable=self.detail_var, fg='gray').pack()
+        tk.Button(raiz, text="Iniciar Respaldo", command=self.iniciar_hilo, width=20, height=2).pack(pady=10)
+        tk.Label(raiz, textvariable=self.estado_var, fg='blue').pack()
+        tk.Label(raiz, textvariable=self.detalle_var, fg='gray').pack()
 
-        self.log = scrolledtext.ScrolledText(root, state='disabled', wrap=tk.WORD)
+        self.log = scrolledtext.ScrolledText(raiz, state='disabled', wrap=tk.WORD)
         self.log.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
 
     def iniciar_hilo(self):
-        threading.Thread(target=self.run_backup, daemon=True).start()
+        threading.Thread(target=self.ejecutar_respaldo, daemon=True).start()
 
-    def actualizar_estado(self, msg, is_detail=False):
-        def _update():
-            if is_detail:
-                self.detail_var.set(msg)
+    def actualizar_estado(self, mensaje, es_detalle=False):
+        def _actualizar():
+            if es_detalle:
+                self.detalle_var.set(mensaje)
             else:
-                self.status_var.set(msg)
-                self.detail_var.set("")
-            self._log(msg)
-        self.root.after_idle(_update)
+                self.estado_var.set(mensaje)
+                self.detalle_var.set("")
+            self._registrar_log(mensaje)
+        self.raiz.after_idle(_actualizar)
 
-    def _log(self, msg):
-        timestamp = datetime.now().strftime("[%H:%M:%S]")
+    def _registrar_log(self, mensaje):
+        marca_tiempo = datetime.now().strftime("[%H:%M:%S]")
         self.log.configure(state='normal')
-        self.log.insert(tk.END, f"{timestamp} {msg}\n")
+        self.log.insert(tk.END, f"{marca_tiempo} {mensaje}\n")
         self.log.configure(state='disabled')
         self.log.see(tk.END)
 
-    def run_backup(self):
-        self.actualizar_estado("Iniciando proceso de backup...")
-        success = backup_process(self.actualizar_estado)
-        msg = "Backup completado con éxito." if success else "Backup fallido."
-        self.actualizar_estado(msg)
-        if success:
-            messagebox.showinfo("Éxito", msg)
+    def ejecutar_respaldo(self):
+        self.actualizar_estado("Iniciando proceso de respaldo...")
+        exito = proceso_respaldo(self.actualizar_estado)
+        mensaje = "Respaldo completado con éxito." if exito else "El respaldo falló."
+        self.actualizar_estado(mensaje)
+        if exito:
+            messagebox.showinfo("Éxito", mensaje)
         else:
-            messagebox.showerror("Error", msg)
+            messagebox.showerror("Error", mensaje)
 
-# --- Inicio ---
+# --- Inicio del programa ---
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = BackupApp(root)
-    root.mainloop()
+    raiz = tk.Tk()
+    app = AplicacionRespaldo(raiz)
+    raiz.mainloop()
