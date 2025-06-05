@@ -12,7 +12,7 @@ Reintentos_cortos = 3
 Tiempo_espera_corto = 60
 Tiempo_espera_largo = 300
 Tiempo_Espera= {
-   'por_defecto' : 30,
+   'por_defecto' : 1,
    'ls_remoto' : 45,
    'push' : 120,
 }
